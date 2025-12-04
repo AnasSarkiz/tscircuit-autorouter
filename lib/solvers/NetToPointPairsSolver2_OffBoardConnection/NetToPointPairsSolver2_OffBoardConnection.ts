@@ -1,7 +1,7 @@
 import {
-  ConnectionPoint,
   SimpleRouteConnection,
   SimpleRouteJson,
+  ConnectionPoint,
 } from "lib/types"
 import { DSU } from "lib/utils/dsu"
 import { NetToPointPairsSolver } from "../NetToPointPairsSolver/NetToPointPairsSolver"
@@ -75,7 +75,9 @@ export class NetToPointPairsSolver2_OffBoardConnection extends NetToPointPairsSo
   _findBestConnectionPointsFromDisjointSets(
     sourcePoint: ConnectionPoint,
     targetPoint: ConnectionPoint,
-  ): { pointsToConnect: [ConnectionPoint, ConnectionPoint] } {
+  ): {
+    pointsToConnect: [ConnectionPoint, ConnectionPoint]
+  } {
     if (!sourcePoint.pointId || !targetPoint.pointId)
       return { pointsToConnect: [sourcePoint, targetPoint] }
 
