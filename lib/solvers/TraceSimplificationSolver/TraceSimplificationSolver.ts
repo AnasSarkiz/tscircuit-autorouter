@@ -22,17 +22,18 @@ type Phase = "via_removal" | "via_merging" | "path_simplification"
  * Each iteration consists of all phases executed sequentially.
  */
 export class TraceSimplificationSolver extends BaseSolver {
-  /** The current state of high-density routes being progressively simplified */
-  private hdRoutes: HighDensityRoute[] = []
-  /** Current iteration count (0-indexed) */
-  private currentRun = 0
-  /** Total number of iterations to run (each iteration includes all phases) */
-  private totalIterations: number
-  /** Current phase of simplification being executed */
-  private currentPhase: Phase = "via_removal"
+  hdRoutes: HighDensityRoute[] = []
+
+  simplificationPipelineLoops = 0
+
+  MAX_SIMPLIFICATION_PIPELINE_LOOPS: number = 2
+
+  PHASE_ORDER: Phase[] = ["via_removal", "via_merging", "path_simplification"]
+
+  currentPhase: Phase = "via_removal"
+
   /** Callback to extract results from the active sub-solver */
-  private extractResult: ((solver: BaseSolver) => HighDensityRoute[]) | null =
-    null
+  extractResult: ((solver: BaseSolver) => HighDensityRoute[]) | null = null
 
   /** Returns the simplified routes. This is the primary output of the solver. */
   get simplifiedHdRoutes(): HighDensityRoute[] {
@@ -60,17 +61,17 @@ export class TraceSimplificationSolver extends BaseSolver {
       outline?: Array<{ x: number; y: number }>
       defaultViaDiameter: number
       layerCount: number
-      iterations?: number
     },
   ) {
     super()
     this.hdRoutes = [...simplificationConfig.hdRoutes]
-    this.totalIterations = simplificationConfig.iterations ?? 2
     this.MAX_ITERATIONS = 100e6
   }
 
   _step() {
-    if (this.currentRun >= this.totalIterations) {
+    if (
+      this.simplificationPipelineLoops >= this.MAX_SIMPLIFICATION_PIPELINE_LOOPS
+    ) {
       this.solved = true
       return
     }
@@ -78,6 +79,10 @@ export class TraceSimplificationSolver extends BaseSolver {
     // If we have an active sub-solver, let it run
     if (this.activeSubSolver) {
       this.activeSubSolver.step()
+
+      if (!this.activeSubSolver.failed && !this.activeSubSolver.solved) {
+        return
+      }
 
       if (this.activeSubSolver.solved) {
         // Capture output using the registered callback
@@ -96,11 +101,14 @@ export class TraceSimplificationSolver extends BaseSolver {
           this.currentPhase = "path_simplification"
         } else {
           this.currentPhase = "via_removal"
-          this.currentRun++
+          this.simplificationPipelineLoops++
         }
 
         // Check if all iterations are complete
-        if (this.currentRun >= this.totalIterations) {
+        if (
+          this.simplificationPipelineLoops >=
+          this.MAX_SIMPLIFICATION_PIPELINE_LOOPS
+        ) {
           this.solved = true
           return
         }
@@ -111,7 +119,6 @@ export class TraceSimplificationSolver extends BaseSolver {
           "Sub-solver failed without error message"
         return
       }
-      return
     }
 
     // No active sub-solver, start the next one
@@ -163,8 +170,80 @@ export class TraceSimplificationSolver extends BaseSolver {
   }
 
   visualize(): GraphicsObject {
-    if (!this.activeSubSolver)
-      return { lines: [], points: [], rects: [], circles: [] } // Empty visualization if no routes
-    return this.activeSubSolver.visualize()
+    if (this.activeSubSolver) {
+      return this.activeSubSolver.visualize()
+    }
+
+    const visualization: GraphicsObject & {
+      lines: NonNullable<GraphicsObject["lines"]>
+      points: NonNullable<GraphicsObject["points"]>
+      rects: NonNullable<GraphicsObject["rects"]>
+      circles: NonNullable<GraphicsObject["circles"]>
+    } = {
+      lines: [],
+      points: [],
+      rects: [],
+      circles: [],
+      coordinateSystem: "cartesian",
+      title: "Trace Simplification Solver",
+    }
+
+    // Visualize obstacles
+    for (const obstacle of this.simplificationConfig.obstacles) {
+      let fillColor = "rgba(128, 128, 128, 0.2)"
+      const isOnLayer0 = obstacle.zLayers?.includes(0)
+      const isOnLayer1 = obstacle.zLayers?.includes(1)
+
+      if (isOnLayer0 && isOnLayer1) {
+        fillColor = "rgba(128, 0, 128, 0.2)"
+      } else if (isOnLayer0) {
+        fillColor = "rgba(255, 0, 0, 0.2)"
+      } else if (isOnLayer1) {
+        fillColor = "rgba(0, 0, 255, 0.2)"
+      }
+
+      visualization.rects.push({
+        center: obstacle.center,
+        width: obstacle.width,
+        height: obstacle.height,
+        fill: fillColor,
+        label: `Obstacle (Z: ${obstacle.zLayers?.join(", ")})`,
+      })
+    }
+
+    // Draw output routes and vias
+    for (const route of this.hdRoutes) {
+      if (route.route.length === 0) continue
+
+      // Draw lines connecting route points on the same layer
+      for (let i = 0; i < route.route.length - 1; i++) {
+        const current = route.route[i]
+        const next = route.route[i + 1]
+
+        if (current.z === next.z) {
+          visualization.lines.push({
+            points: [
+              { x: current.x, y: current.y },
+              { x: next.x, y: next.y },
+            ],
+            strokeColor: current.z === 0 ? "red" : "blue",
+            strokeWidth: route.traceThickness,
+            label: `${route.connectionName} (z=${current.z})`,
+          })
+        }
+      }
+
+      // Draw circles for vias
+      for (const via of route.vias) {
+        visualization.circles.push({
+          center: { x: via.x, y: via.y },
+          radius: route.viaDiameter / 2,
+          fill: "rgba(255, 0, 255, 0.5)",
+          label: `${route.connectionName} via`,
+        })
+      }
+    }
+
+    return visualization
   }
 }

@@ -22,6 +22,7 @@ import { createSegmentPointMap } from "./createSegmentPointMap"
 import { getIntraNodeCrossingsFromSegmentPoints } from "lib/utils/getIntraNodeCrossingsFromSegmentPoints"
 import { getNodesNearNode } from "./getNodesNearNode"
 import { CacheProvider } from "lib/cache/types"
+import { doSegmentsIntersect, distance } from "@tscircuit/math-utils"
 
 export class UnravelMultiSectionSolver extends BaseSolver {
   nodeMap: Map<CapacityMeshNodeId, CapacityMeshNode>
@@ -209,7 +210,6 @@ export class UnravelMultiSectionSolver extends BaseSolver {
     //   this.activeSubSolver.iterationsSinceImprovement >
     //   this.MAX_ITERATIONS_WITHOUT_IMPROVEMENT
 
-    // cn90994
     if (this.activeSubSolver.failed) {
       this.stats.failedOptimizations += 1
       this.activeSubSolver = null
