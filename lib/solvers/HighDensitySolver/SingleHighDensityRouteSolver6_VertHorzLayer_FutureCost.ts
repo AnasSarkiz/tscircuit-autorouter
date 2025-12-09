@@ -21,8 +21,10 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
 
     // Ratio of available space determines via penalty
     const viasThatCanFitHorz = this.boundsSize.width / this.viaDiameter
+    // Avoid division by zero when there are no routes
+    const routeCount = Math.max(1, this.numRoutes)
     this.VIA_PENALTY_FACTOR =
-      0.3 * (viasThatCanFitHorz / this.numRoutes) * this.VIA_PENALTY_FACTOR_2
+      0.3 * (viasThatCanFitHorz / routeCount) * this.VIA_PENALTY_FACTOR_2
   }
 
   getClosestFutureConnectionPoint(node: Node) {
@@ -90,11 +92,13 @@ export class SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost extends Sing
     const dy = Math.abs(node.y - node.parent!.y)
     const dist = Math.sqrt(dx ** 2 + dy ** 2)
 
+    // Even layers (0, 2, ...) prefer horizontal, odd layers (1, 3, ...) prefer vertical
+    const isEvenLayer = node.z % 2 === 0
     const misalignedDist = !this.FLIP_TRACE_ALIGNMENT_DIRECTION
-      ? node.z === 0
+      ? isEvenLayer
         ? dy
         : dx
-      : node.z === 0
+      : isEvenLayer
         ? dx
         : dy
 

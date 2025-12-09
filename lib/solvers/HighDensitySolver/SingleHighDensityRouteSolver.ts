@@ -99,7 +99,7 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
     this.exploredNodes = new Set()
     this.straightLineDistance = distance(this.A, this.B)
     this.futureConnections = opts.futureConnections ?? []
-    this.MAX_ITERATIONS = 5000
+    this.MAX_ITERATIONS = 10e3 // 5000
 
     this.debug_exploredNodesOrdered = []
     this.debug_nodesTooCloseToObstacle = new Set()
@@ -285,15 +285,15 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
   computeH(node: Node) {
     return (
       distance(node, this.B) +
-      // via penalty
-      Math.abs(node.z - this.B.z) * this.viaPenaltyDistance
+      // via penalty (one via can reach any layer, so just check if layers differ)
+      (node.z !== this.B.z ? this.viaPenaltyDistance : 0)
     )
   }
 
   computeG(node: Node) {
     return (
       (node.parent?.g ?? 0) +
-      (node.z === 0 ? 0 : this.viaPenaltyDistance) +
+      (node.z === node.parent?.z ? 0 : this.viaPenaltyDistance) +
       distance(node, node.parent!)
     )
   }
@@ -353,26 +353,31 @@ export class SingleHighDensityRouteSolver extends BaseSolver {
       }
     }
 
-    const viaNeighbor = {
-      ...node,
-      parent: node,
-      z: node.z === 0 ? this.layerCount - 1 : 0,
-    }
+    // Add via neighbors for all other layers (a via can connect any layer to any other layer)
+    for (let newZ = 0; newZ < this.layerCount; newZ++) {
+      if (newZ === node.z) continue
 
-    if (
-      !this.exploredNodes.has(this.getNodeKey(viaNeighbor)) &&
-      !this.isNodeTooCloseToObstacle(
-        viaNeighbor,
-        this.viaDiameter / 2 + this.obstacleMargin / 2,
-        true,
-      ) &&
-      !this.isNodeTooCloseToEdge(viaNeighbor, true)
-    ) {
-      viaNeighbor.g = this.computeG(viaNeighbor)
-      viaNeighbor.h = this.computeH(viaNeighbor)
-      viaNeighbor.f = this.computeF(viaNeighbor.g, viaNeighbor.h)
+      const viaNeighbor = {
+        ...node,
+        parent: node,
+        z: newZ,
+      }
 
-      neighbors.push(viaNeighbor)
+      if (
+        !this.exploredNodes.has(this.getNodeKey(viaNeighbor)) &&
+        !this.isNodeTooCloseToObstacle(
+          viaNeighbor,
+          this.viaDiameter / 2 + this.obstacleMargin / 2,
+          true,
+        ) &&
+        !this.isNodeTooCloseToEdge(viaNeighbor, true)
+      ) {
+        viaNeighbor.g = this.computeG(viaNeighbor)
+        viaNeighbor.h = this.computeH(viaNeighbor)
+        viaNeighbor.f = this.computeF(viaNeighbor.g, viaNeighbor.h)
+
+        neighbors.push(viaNeighbor)
+      }
     }
 
     return neighbors
