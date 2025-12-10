@@ -44,6 +44,7 @@ export class SingleHighDensityRouteStitchSolver extends BaseSolver {
 
       this.mergedHdRoute = {
         connectionName: opts.connectionName,
+        rootConnectionName: opts.hdRoutes[0]?.rootConnectionName,
         route: routePoints,
         vias: vias,
         viaDiameter: opts.defaultViaDiameter ?? 0.6, // Use default or fallback
@@ -110,6 +111,7 @@ export class SingleHighDensityRouteStitchSolver extends BaseSolver {
 
     this.mergedHdRoute = {
       connectionName: opts.connectionName, // Use mandatory connectionName
+      rootConnectionName: firstRoute.rootConnectionName,
       route: [
         {
           x: this.start.x,

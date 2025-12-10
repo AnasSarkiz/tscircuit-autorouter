@@ -33,6 +33,7 @@ export const createSegmentPointMap = (
           segment.nodePortSegmentId!,
         )!,
         connectionName: point.connectionName,
+        rootConnectionName: point.rootConnectionName,
         x: point.point.x,
         y: point.point.y,
         z: point.point.z,

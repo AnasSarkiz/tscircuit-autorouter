@@ -1,5 +1,6 @@
 export type PortPoint = {
   connectionName: string
+  rootConnectionName?: string
   x: number
   y: number
   z: number
@@ -30,6 +31,7 @@ export type NodeWithPortPoints = {
  */
 export type HighDensityIntraNodeRoute = {
   connectionName: string
+  rootConnectionName?: string
   traceThickness: number
   viaDiameter: number
   route: Array<{ x: number; y: number; z: number }>
