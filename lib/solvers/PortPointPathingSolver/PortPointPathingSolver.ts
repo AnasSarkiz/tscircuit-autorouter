@@ -681,7 +681,20 @@ export class PortPointPathingSolver extends BaseSolver {
     )
   }
 
-  getAvailableExitPortPoints(nodeId: CapacityMeshNodeId) {
+  getVisitedPortPointKey(
+    portPointId: string,
+    hasTouchedOffBoardNode?: boolean,
+  ): string {
+    if (this.currentConnectionShouldRouteOffBoard && hasTouchedOffBoardNode) {
+      return `${portPointId}:touched_off_board`
+    }
+    return portPointId
+  }
+
+  getAvailableExitPortPoints(
+    nodeId: CapacityMeshNodeId,
+    hasTouchedOffBoardNode?: boolean,
+  ) {
     const currentConnection =
       this.connectionsWithResults[this.currentConnectionIndex]
     const currentRootConnectionName =
@@ -691,7 +704,11 @@ export class PortPointPathingSolver extends BaseSolver {
     const availablePortPoints: InputPortPoint[] = []
 
     for (const pp of portPoints) {
-      if (this.visitedPortPoints?.has(pp.portPointId)) continue
+      const visitedKey = this.getVisitedPortPointKey(
+        pp.portPointId,
+        hasTouchedOffBoardNode,
+      )
+      if (this.visitedPortPoints?.has(visitedKey)) continue
       const assignment = this.assignedPortPoints.get(pp.portPointId)
       if (
         assignment &&
@@ -716,6 +733,7 @@ export class PortPointPathingSolver extends BaseSolver {
   getAvailableExitPortPointsWithOmissions(
     nodeId: CapacityMeshNodeId,
     _endGoalNodeId: CapacityMeshNodeId,
+    hasTouchedOffBoardNode?: boolean,
   ): InputPortPoint[] {
     const portPoints = this.nodePortPointsMap.get(nodeId) ?? []
     const currentNode = this.nodeMap.get(nodeId)
@@ -728,7 +746,11 @@ export class PortPointPathingSolver extends BaseSolver {
     const portsOnSameEdgeMap = new Map<string, InputPortPoint[]>()
 
     for (const pp of portPoints) {
-      if (this.visitedPortPoints?.has(pp.portPointId)) continue
+      const visitedKey = this.getVisitedPortPointKey(
+        pp.portPointId,
+        hasTouchedOffBoardNode,
+      )
+      if (this.visitedPortPoints?.has(visitedKey)) continue
 
       const otherNodeId = this.getOtherNodeId(pp, nodeId)
       if (!otherNodeId) continue
@@ -775,7 +797,10 @@ export class PortPointPathingSolver extends BaseSolver {
     return result
   }
 
-  getAvailableExitPortPointsForOffboardConnection(nodeId: CapacityMeshNodeId) {
+  getAvailableExitPortPointsForOffboardConnection(
+    nodeId: CapacityMeshNodeId,
+    hasTouchedOffBoardNode?: boolean,
+  ) {
     const currentNode = this.nodeMap.get(nodeId)
     if (!currentNode) return []
     const currentConnection =
@@ -795,7 +820,11 @@ export class PortPointPathingSolver extends BaseSolver {
       if (!otherNode) continue
       const otherPortPoints = this.nodePortPointsMap.get(otherNodeId) ?? []
       for (const pp of otherPortPoints) {
-        if (this.visitedPortPoints?.has(pp.portPointId)) continue
+        const visitedKey = this.getVisitedPortPointKey(
+          pp.portPointId,
+          hasTouchedOffBoardNode,
+        )
+        if (this.visitedPortPoints?.has(visitedKey)) continue
         const assignment = this.assignedPortPoints.get(pp.portPointId)
         if (
           assignment &&
@@ -1145,7 +1174,19 @@ export class PortPointPathingSolver extends BaseSolver {
 
     // Sort candidates by f value
     this.candidates.sort((a, b) => a.f - b.f)
-    const currentCandidate = this.candidates.shift()
+
+    // Pop until we find a candidate whose entry portPoint isn't already closed
+    let currentCandidate = this.candidates.shift()
+    while (currentCandidate?.portPoint && this.visitedPortPoints) {
+      const visitedKey = this.getVisitedPortPointKey(
+        currentCandidate.portPoint.portPointId,
+        currentCandidate.hasTouchedOffBoardNode,
+      )
+      if (!this.visitedPortPoints.has(visitedKey)) {
+        break
+      }
+      currentCandidate = this.candidates.shift()
+    }
 
     // Limit memory usage
     if (this.candidates.length > this.MAX_CANDIDATES_IN_MEMORY) {
@@ -1163,6 +1204,15 @@ export class PortPointPathingSolver extends BaseSolver {
       this.currentPathIterations = 0
       this.failed = true
       return
+    }
+
+    // Mark current port point as visited immediately (Fix B: mark visited early)
+    if (currentCandidate.portPoint && this.visitedPortPoints) {
+      const visitedKey = this.getVisitedPortPointKey(
+        currentCandidate.portPoint.portPointId,
+        currentCandidate.hasTouchedOffBoardNode,
+      )
+      this.visitedPortPoints.add(visitedKey)
     }
 
     // If we're at end goal node, close it by connecting to the end target point
@@ -1227,6 +1277,7 @@ export class PortPointPathingSolver extends BaseSolver {
       availablePortPoints =
         this.getAvailableExitPortPointsForOffboardConnection(
           currentCandidate.currentNodeId,
+          currentCandidate.hasTouchedOffBoardNode,
         )
       // for (const pp of availablePortPoints) {
       //   this.visitedPortPoints?.add(pp.portPointId)
@@ -1235,10 +1286,12 @@ export class PortPointPathingSolver extends BaseSolver {
       availablePortPoints = this.getAvailableExitPortPointsWithOmissions(
         currentCandidate.currentNodeId,
         endNodeId,
+        currentCandidate.hasTouchedOffBoardNode,
       )
     } else {
       availablePortPoints = this.getAvailableExitPortPoints(
         currentCandidate.currentNodeId,
+        currentCandidate.hasTouchedOffBoardNode,
       )
     }
 
@@ -1258,10 +1311,19 @@ export class PortPointPathingSolver extends BaseSolver {
       )
       if (!nextNodeId) continue
 
-      const throughNode =
-        "throughNodeId" in portPoint && portPoint.throughNodeId
-          ? this.nodeMap.get(portPoint.throughNodeId as string)
-          : null
+      const throughNodeId =
+        "throughNodeId" in portPoint
+          ? (portPoint as { throughNodeId?: CapacityMeshNodeId }).throughNodeId
+          : undefined
+      const throughNode = throughNodeId ? this.nodeMap.get(throughNodeId) : null
+
+      // Prevent throughNodeId cycles (off-board improvement)
+      if (
+        throughNodeId &&
+        this.isNodeInPathChain(currentCandidate, throughNodeId)
+      ) {
+        continue
+      }
 
       // Prevent node cycles (keeps delta-pf accounting correct)
       if (this.isNodeInPathChain(currentCandidate, nextNodeId)) continue
@@ -1324,19 +1386,12 @@ export class PortPointPathingSolver extends BaseSolver {
         h,
         distanceTraveled,
         lastMoveWasOffBoard: lastMoveWasOffBoard,
-        throughNodeId: lastMoveWasOffBoard
-          ? (portPoint as { throughNodeId?: CapacityMeshNodeId }).throughNodeId
-          : undefined,
+        throughNodeId: lastMoveWasOffBoard ? throughNodeId : undefined,
         hasTouchedOffBoardNode:
           hasTouchedOffBoardNode ||
           Boolean(nextNode._offBoardConnectionId) ||
           Boolean(currentNode?._offBoardConnectionId),
       })
-    }
-
-    // Mark current port point as visited (if any)
-    if (currentCandidate.portPoint && this.visitedPortPoints) {
-      this.visitedPortPoints.add(currentCandidate.portPoint.portPointId)
     }
   }
 
