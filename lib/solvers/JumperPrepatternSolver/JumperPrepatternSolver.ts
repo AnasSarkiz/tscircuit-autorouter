@@ -198,7 +198,7 @@ export class JumperPrepatternSolver extends BaseSolver {
     ),
     definePipelineStep(
       "portPointPathingSolver",
-      PortPointPathingSolver,
+      HyperPortPointPathingSolver,
       (solver) => {
         // Build input nodes with port points from the segment solver
         const inputNodes: InputNodeWithPortPoints[] = solver.capacityNodes.map(
@@ -255,7 +255,7 @@ export class JumperPrepatternSolver extends BaseSolver {
             inputNodes,
             capacityMeshNodes: solver.capacityNodes,
             colorMap: solver.colorMap,
-            numShuffleSeeds: 5000,
+            numShuffleSeeds: 100,
             hyperParameters: {
               NODE_PF_FACTOR: 100,
               NODE_PF_MAX_PENALTY: 100,
@@ -263,6 +263,9 @@ export class JumperPrepatternSolver extends BaseSolver {
               FORCE_OFF_BOARD_FREQUENCY: 0.8,
               MIN_ALLOWED_BOARD_SCORE: -1,
               FORCE_CENTER_FIRST: true,
+              RIPPING_ENABLED: true,
+              RIPPING_PF_THRESHOLD: 0.3,
+              MAX_RIPS: 1000,
             },
           } as HyperPortPointPathingSolverParams,
         ]
@@ -343,7 +346,7 @@ export class JumperPrepatternSolver extends BaseSolver {
     this.traceWidth = params.traceWidth ?? 0.15
     this.jumperFootprint = params.jumperFootprint ?? "0603"
     this.hyperParameters = params.hyperParameters ?? {}
-    this.MAX_ITERATIONS = 100_000
+    this.MAX_ITERATIONS = 1e6
 
     // Generate jumpers using the pattern function (before creating SimpleRouteJson since it needs the obstacles)
     this.patternResult = alternatingGrid(this)
@@ -381,7 +384,6 @@ export class JumperPrepatternSolver extends BaseSolver {
       } else if (this.activeSubSolver.failed) {
         this.error = this.activeSubSolver?.error
         this.failed = true
-        this.activeSubSolver = null
       }
       return
     }

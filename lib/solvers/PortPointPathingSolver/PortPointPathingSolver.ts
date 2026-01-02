@@ -46,6 +46,10 @@ export interface PortPointPathingHyperParameters {
 
   FORCE_OFF_BOARD_FREQUENCY?: number
   FORCE_OFF_BOARD_SEED?: number
+
+  RIPPING_ENABLED?: boolean
+  RIPPING_PF_THRESHOLD?: number
+  MAX_RIPS?: number
 }
 
 /**
@@ -236,7 +240,7 @@ export class PortPointPathingSolver extends BaseSolver {
     return this.hyperParameters.GREEDY_MULTIPLIER ?? 1.3
   }
 
-  MAX_CANDIDATES_IN_MEMORY = 10000
+  MAX_CANDIDATES_IN_MEMORY = 5000
 
   get MAX_ITERATIONS_PER_PATH() {
     return this.hyperParameters.MAX_ITERATIONS_PER_PATH ?? 10000
@@ -245,14 +249,40 @@ export class PortPointPathingSolver extends BaseSolver {
   ITERATIONS_PER_MM_FOR_PATH = 30
   BASE_ITERATIONS_PER_PATH = 10000
 
+  get RIPPING_ENABLED() {
+    return this.hyperParameters.RIPPING_ENABLED ?? false
+  }
+
+  get RIPPING_PF_THRESHOLD() {
+    return this.hyperParameters.RIPPING_PF_THRESHOLD ?? 0.3
+  }
+
+  get MAX_RIPS() {
+    return this.hyperParameters.MAX_RIPS ?? 100
+  }
+
+  /** Tracks which connections have been test-ripped for each node to avoid retesting */
+  testedRipConnections: Map<CapacityMeshNodeId, Set<string>> = new Map()
+
+  /** Tracks total number of connections that have been ripped/requeued */
+  totalRipCount = 0
+
   get MIN_ALLOWED_BOARD_SCORE() {
     return this.hyperParameters.MIN_ALLOWED_BOARD_SCORE ?? -10000
   }
 
   nodeMemoryPfMap: Map<CapacityMeshNodeId, number>
 
-  // Current pathing state
-  currentConnectionIndex = 0
+  // Current pathing state - using queues for easier rip/requeue
+  /** Connections waiting to be routed */
+  unprocessedConnectionQueue: ConnectionPathResult[] = []
+  /** Connections that have been successfully routed */
+  processedConnectionQueue: ConnectionPathResult[] = []
+  /** The connection currently being worked on */
+  currentConnection: ConnectionPathResult | null = null
+  /** Total number of connections (for progress calculation) */
+  totalConnectionCount = 0
+
   currentPathIterations = 0
   candidates?: PortPointCandidate[] | null
   /** Tracks visited port point IDs to avoid revisiting */
@@ -296,7 +326,7 @@ export class PortPointPathingSolver extends BaseSolver {
     fixedRoutes?: ConnectionPathResult[]
   }) {
     super()
-    this.MAX_ITERATIONS = 50e3
+    this.MAX_ITERATIONS = 100e3
     this.simpleRouteJson = simpleRouteJson
     this.inputNodes = inputNodes
     this.colorMap = colorMap ?? {}
@@ -397,6 +427,18 @@ export class PortPointPathingSolver extends BaseSolver {
         }
       }
     }
+
+    // Initialize connection queues from connectionsWithResults
+    // Fixed routes (with path already set) go to processed queue
+    // Others go to unprocessed queue
+    for (const conn of this.connectionsWithResults) {
+      if (conn.path) {
+        this.processedConnectionQueue.push(conn)
+      } else {
+        this.unprocessedConnectionQueue.push(conn)
+      }
+    }
+    this.totalConnectionCount = this.connectionsWithResults.length
   }
 
   private clearCostCaches() {
@@ -726,10 +768,8 @@ export class PortPointPathingSolver extends BaseSolver {
     nodeId: CapacityMeshNodeId,
     hasTouchedOffBoardNode?: boolean,
   ) {
-    const currentConnection =
-      this.connectionsWithResults[this.currentConnectionIndex]
     const currentRootConnectionName =
-      currentConnection?.connection.rootConnectionName
+      this.currentConnection?.connection.rootConnectionName
     const portPoints = this.nodePortPointsMap.get(nodeId) ?? []
 
     const availablePortPoints: InputPortPoint[] = []
@@ -768,10 +808,8 @@ export class PortPointPathingSolver extends BaseSolver {
   ): InputPortPoint[] {
     const portPoints = this.nodePortPointsMap.get(nodeId) ?? []
     // const currentNode = this.nodeMap.get(nodeId)
-    const currentConnection =
-      this.connectionsWithResults[this.currentConnectionIndex]
     const currentRootConnectionName =
-      currentConnection?.connection.rootConnectionName
+      this.currentConnection?.connection.rootConnectionName
 
     // Group by "other side node" + z
     const portsOnSameEdgeMap = new Map<string, InputPortPoint[]>()
@@ -864,10 +902,8 @@ export class PortPointPathingSolver extends BaseSolver {
   ) {
     const currentNode = this.nodeMap.get(nodeId)
     if (!currentNode) return []
-    const currentConnection =
-      this.connectionsWithResults[this.currentConnectionIndex]
     const currentRootConnectionName =
-      currentConnection?.connection.rootConnectionName
+      this.currentConnection?.connection.rootConnectionName
     const availablePortPoints: (InputPortPoint & {
       throughNodeId: CapacityMeshNodeId
     })[] = []
@@ -1144,9 +1180,13 @@ export class PortPointPathingSolver extends BaseSolver {
   }
 
   _step() {
-    const nextConnection =
-      this.connectionsWithResults[this.currentConnectionIndex]
-    if (!nextConnection) {
+    // If no current connection, try to get one from the unprocessed queue
+    if (!this.currentConnection) {
+      this.currentConnection = this.unprocessedConnectionQueue.shift() ?? null
+    }
+
+    // If still no connection, we're done
+    if (!this.currentConnection) {
       const boardScore = this.computeBoardScore()
       this.stats = {
         boardScore,
@@ -1161,11 +1201,7 @@ export class PortPointPathingSolver extends BaseSolver {
       return
     }
 
-    // Skip connections that already have a path (fixed routes)
-    if (nextConnection.path) {
-      this.currentConnectionIndex++
-      return
-    }
+    const nextConnection = this.currentConnection
 
     // Set the straight line distance for dynamic iteration limit (must be before the check)
     this.activeCandidateStraightLineDistance =
@@ -1176,7 +1212,9 @@ export class PortPointPathingSolver extends BaseSolver {
     const maxIterationsForPath = this.getMaxIterationsForCurrentPath()
     if (this.currentPathIterations > maxIterationsForPath) {
       this.failedConnection = nextConnection
-      this.currentConnectionIndex++
+      // Move to processed queue even though it failed (to avoid infinite loops)
+      this.processedConnectionQueue.push(nextConnection)
+      this.currentConnection = null
       this.candidates = null
       this.visitedPortPoints = null
       this.currentPathIterations = 0
@@ -1189,7 +1227,9 @@ export class PortPointPathingSolver extends BaseSolver {
     const startNode = this.nodeMap.get(startNodeId)
     const endNode = this.nodeMap.get(endNodeId)
     if (!startNode || !endNode) {
-      this.currentConnectionIndex++
+      // Invalid connection, move to processed and continue
+      this.processedConnectionQueue.push(nextConnection)
+      this.currentConnection = null
       this.currentPathIterations = 0
       return
     }
@@ -1207,7 +1247,7 @@ export class PortPointPathingSolver extends BaseSolver {
         const random = seededRandom(
           (this.hyperParameters.SHUFFLE_SEED ?? 0) * 17 +
             this.FORCE_OFF_BOARD_SEED +
-            this.currentConnectionIndex,
+            this.processedConnectionQueue.length,
         )
         this.currentConnectionShouldRouteOffBoard =
           random() < this.FORCE_OFF_BOARD_FREQUENCY
@@ -1276,7 +1316,9 @@ export class PortPointPathingSolver extends BaseSolver {
     if (!currentCandidate) {
       this.error = `Ran out of candidates on connection ${connectionName}`
       this.failedConnection = nextConnection
-      this.currentConnectionIndex++
+      // Move to processed queue even though it failed
+      this.processedConnectionQueue.push(nextConnection)
+      this.currentConnection = null
       this.candidates = null
       this.visitedPortPoints = null
       this.currentPathIterations = 0
@@ -1338,9 +1380,16 @@ export class PortPointPathingSolver extends BaseSolver {
       // Committed state changed -> invalidate caches
       this.clearCostCaches()
 
-      this.currentConnectionIndex++
+      // Process ripping if enabled
+      if (this.RIPPING_ENABLED) {
+        this.processRippingForPath(path, connectionName)
+      }
+
+      // Move completed connection to processed queue
+      this.processedConnectionQueue.push(nextConnection)
+      this.currentConnection = null
       this.progress =
-        this.currentConnectionIndex / this.connectionsWithResults.length
+        this.processedConnectionQueue.length / this.totalConnectionCount
       this.candidates = null
       this.visitedPortPoints = null
       this.currentPathIterations = 0
@@ -1432,7 +1481,7 @@ export class PortPointPathingSolver extends BaseSolver {
       )
 
       // Don't add candidates whose g cost would cause the board to drop below MIN_ALLOWED_BOARD_SCORE
-      if (g > -this.MIN_ALLOWED_BOARD_SCORE) {
+      if (!this.RIPPING_ENABLED && g > -this.MIN_ALLOWED_BOARD_SCORE) {
         continue
       }
 
@@ -1503,6 +1552,224 @@ export class PortPointPathingSolver extends BaseSolver {
     }
 
     return result
+  }
+
+  /**
+   * Get all connections that pass through a given node (excluding a specific connection).
+   */
+  getConnectionsInNode(
+    nodeId: CapacityMeshNodeId,
+    excludeConnectionName?: string,
+  ): ConnectionPathResult[] {
+    const connections: ConnectionPathResult[] = []
+    const seenConnectionNames = new Set<string>()
+
+    for (const connResult of this.connectionsWithResults) {
+      if (!connResult.path) continue
+      if (connResult.connection.name === excludeConnectionName) continue
+      if (seenConnectionNames.has(connResult.connection.name)) continue
+
+      // Check if this connection passes through the node
+      for (const candidate of connResult.path) {
+        if (candidate.currentNodeId === nodeId) {
+          connections.push(connResult)
+          seenConnectionNames.add(connResult.connection.name)
+          break
+        }
+      }
+    }
+
+    return connections
+  }
+
+  /**
+   * Compute the pf and crossing count of a node with a specific connection removed (for test-ripping).
+   */
+  computeNodePfWithoutConnection(
+    node: InputNodeWithPortPoints,
+    connectionNameToRemove: string,
+  ): { pf: number; totalCrossings: number } {
+    if (node._containsTarget) return { pf: 0, totalCrossings: 0 }
+
+    const existingPortPoints =
+      this.nodeAssignedPortPoints.get(node.capacityMeshNodeId) ?? []
+
+    // Filter out port points for the connection we're testing removal of
+    const filteredPortPoints = existingPortPoints.filter(
+      (pp) => pp.connectionName !== connectionNameToRemove,
+    )
+
+    const nodeWithPortPoints: NodeWithPortPoints = {
+      capacityMeshNodeId: node.capacityMeshNodeId,
+      center: node.center,
+      width: node.width,
+      height: node.height,
+      portPoints: filteredPortPoints,
+      availableZ: node.availableZ,
+    }
+
+    const crossings = getIntraNodeCrossingsUsingCircle(nodeWithPortPoints)
+    const totalCrossings =
+      crossings.numSameLayerCrossings +
+      crossings.numEntryExitLayerChanges +
+      crossings.numTransitionPairCrossings
+
+    const pf = calculateNodeProbabilityOfFailure(
+      this.capacityMeshNodeMap.get(node.capacityMeshNodeId)!,
+      crossings.numSameLayerCrossings,
+      crossings.numEntryExitLayerChanges,
+      crossings.numTransitionPairCrossings,
+    )
+
+    return { pf, totalCrossings }
+  }
+
+  /**
+   * Compute the current crossing count for a node.
+   */
+  computeNodeCrossings(node: InputNodeWithPortPoints): number {
+    if (node._containsTarget) return 0
+
+    const nodeWithPortPoints = this.buildNodeWithPortPointsForCrossing(node)
+    const crossings = getIntraNodeCrossingsUsingCircle(nodeWithPortPoints)
+    return (
+      crossings.numSameLayerCrossings +
+      crossings.numEntryExitLayerChanges +
+      crossings.numTransitionPairCrossings
+    )
+  }
+
+  /**
+   * Rip a connection: unassign all its port points and clear its path.
+   * The connection will be re-routed later.
+   */
+  ripConnection(connectionResult: ConnectionPathResult): void {
+    const connectionName = connectionResult.connection.name
+
+    // Remove port points from assignedPortPoints map
+    for (const [portPointId, assignment] of this.assignedPortPoints.entries()) {
+      if (assignment.connectionName === connectionName) {
+        this.assignedPortPoints.delete(portPointId)
+      }
+    }
+
+    // Remove port points from nodeAssignedPortPoints
+    for (const [nodeId, portPoints] of this.nodeAssignedPortPoints.entries()) {
+      const filteredPortPoints = portPoints.filter(
+        (pp) => pp.connectionName !== connectionName,
+      )
+      this.nodeAssignedPortPoints.set(nodeId, filteredPortPoints)
+    }
+
+    // Clear the path and portPoints so it gets re-routed
+    connectionResult.path = undefined
+    connectionResult.portPoints = undefined
+  }
+
+  /**
+   * Requeue a connection by moving it to the unprocessed queue for re-routing.
+   * If already processed, moves it from processed to unprocessed.
+   * If still unprocessed, moves it to the front for priority re-routing.
+   * Returns false if MAX_RIPS exceeded (solver should fail).
+   */
+  requeueConnection(connectionResult: ConnectionPathResult): boolean {
+    this.totalRipCount++
+
+    // Check if we've exceeded MAX_RIPS
+    if (this.totalRipCount > this.MAX_RIPS) {
+      this.failed = true
+      this.error = `Exceeded MAX_RIPS (${this.MAX_RIPS}) - too many connections ripped`
+      return false
+    }
+
+    // Check if this connection is in the processed queue (already routed)
+    const processedIndex =
+      this.processedConnectionQueue.indexOf(connectionResult)
+    if (processedIndex !== -1) {
+      // Remove from processed queue and add to unprocessed for re-routing
+      this.processedConnectionQueue.splice(processedIndex, 1)
+      this.unprocessedConnectionQueue.push(connectionResult)
+      return true
+    }
+
+    // Check if in unprocessed queue - move to front for priority
+    const unprocessedIndex =
+      this.unprocessedConnectionQueue.indexOf(connectionResult)
+    if (unprocessedIndex !== -1) {
+      this.unprocessedConnectionQueue.splice(unprocessedIndex, 1)
+      this.unprocessedConnectionQueue.unshift(connectionResult)
+    }
+    return true
+  }
+
+  /**
+   * Process ripping for high-pf nodes after a path is solved.
+   * For each node with pf > RIPPING_PF_THRESHOLD that the path goes through,
+   * test-rip connections until pf is below threshold.
+   */
+  processRippingForPath(
+    path: PortPointCandidate[],
+    justRoutedConnectionName: string,
+  ): void {
+    // Get unique nodes in the path
+    const nodeIds = Array.from(new Set(path.map((c) => c.currentNodeId)))
+
+    for (const nodeId of nodeIds) {
+      // Stop if solver already failed (e.g., MAX_RIPS exceeded)
+      if (this.failed) return
+
+      const node = this.nodeMap.get(nodeId)
+      if (!node) continue
+
+      // Check current pf and crossings
+      let currentPf = this.computeNodePf(node)
+      if (currentPf <= this.RIPPING_PF_THRESHOLD) continue
+
+      // Initialize tested connections set for this node if needed
+      if (!this.testedRipConnections.has(nodeId)) {
+        this.testedRipConnections.set(nodeId, new Set())
+      }
+      const testedForNode = this.testedRipConnections.get(nodeId)!
+
+      // Get connections in this node (excluding the one we just routed)
+      const connectionsInNode = this.getConnectionsInNode(
+        nodeId,
+        justRoutedConnectionName,
+      )
+
+      // Shuffle connections pseudo-randomly for test order
+      const shuffledConnections = cloneAndShuffleArray(
+        connectionsInNode,
+        (this.hyperParameters.SHUFFLE_SEED ?? 0) +
+          this.processedConnectionQueue.length,
+      )
+
+      // Test-rip connections until pf is below threshold
+      for (const connResult of shuffledConnections) {
+        if (currentPf <= this.RIPPING_PF_THRESHOLD) break
+
+        const connName = connResult.connection.name
+
+        // Skip if we've already tested this connection for this node
+        // if (testedForNode.has(connName)) continue
+        testedForNode.add(connName)
+
+        // Compute pf and crossings without this connection
+        const { pf: pfWithoutConn } = this.computeNodePfWithoutConnection(
+          node,
+          connName,
+        )
+
+        // If pf decreases rip the connection
+        this.ripConnection(connResult)
+        const success = this.requeueConnection(connResult)
+        if (!success) return // MAX_RIPS exceeded, solver failed
+        currentPf = pfWithoutConn
+
+        // Clear cost caches since state changed
+        this.clearCostCaches()
+      }
+    }
   }
 
   visualize(): GraphicsObject {
