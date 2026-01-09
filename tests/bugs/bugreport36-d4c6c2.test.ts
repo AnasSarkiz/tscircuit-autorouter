@@ -15,6 +15,7 @@ test(
   "bugreport36-d4c6c2",
   () => {
     const solver = new AssignableAutoroutingPipeline3(srj)
+
     solver.solve()
     expect(getLastStepSvg(solver.visualize())).toMatchSvgSnapshot(
       import.meta.path,

@@ -22,6 +22,8 @@ import {
 import { areSegmentsCollinear } from "./areSegmentsCollinear"
 import { getCollinearOverlapInfo } from "./getCollinearOverlapInfo"
 import { computeOffsetMidpoint } from "./computeOffsetMidpoint"
+import { createRegionOffsetPoints } from "./createRegionOffsetPoints"
+import { doBoundsOverlap, doSegmentsIntersect } from "@tscircuit/math-utils"
 
 export type Point2D = { x: number; y: number }
 
@@ -196,6 +198,39 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
       bounds: nodeBounds,
     })
 
+    // Check if baseGraph bounds exceed node bounds - fail immediately if so
+    // Compute bounds from regions since JumperGraph doesn't have a bounds property
+    if (baseGraph.regions.length > 0) {
+      // TODO import calculateGraphBounds from @tscircuit/hypergraph (when
+      // exported)
+      let bgMinX = Infinity
+      let bgMaxX = -Infinity
+      let bgMinY = Infinity
+      let bgMaxY = -Infinity
+      for (const region of baseGraph.regions) {
+        const bounds = region.d?.bounds
+        if (bounds) {
+          bgMinX = Math.min(bgMinX, bounds.minX)
+          bgMaxX = Math.max(bgMaxX, bounds.maxX)
+          bgMinY = Math.min(bgMinY, bounds.minY)
+          bgMaxY = Math.max(bgMaxY, bounds.maxY)
+        }
+      }
+
+      const margin = 0.4
+
+      if (
+        bgMinX < nodeBounds.minX - margin ||
+        bgMaxX > nodeBounds.maxX + margin ||
+        bgMinY < nodeBounds.minY - margin ||
+        bgMaxY > nodeBounds.maxY + margin
+      ) {
+        this.error = `baseGraph bounds (${bgMinX.toFixed(2)}, ${bgMinY.toFixed(2)}, ${bgMaxX.toFixed(2)}, ${bgMaxY.toFixed(2)}) exceed node bounds (${nodeBounds.minX.toFixed(2)}, ${nodeBounds.minY.toFixed(2)}, ${nodeBounds.maxX.toFixed(2)}, ${nodeBounds.maxY.toFixed(2)})`
+        this.failed = true
+        return false
+      }
+    }
+
     // Store all jumper positions from the baseGraph (including padRegions for obstacle generation)
     this.jumperLocations =
       baseGraph.jumperLocations?.map((loc) => ({
@@ -287,6 +322,10 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
   private _processResults() {
     if (!this.jumperGraphSolver) return
 
+    // Offset distance to push points slightly inside regions (mm)
+    // This helps subsequent force-directed solvers understand segment lies within region
+    const OFFSET_POINT_INSIDE_REGION = 0.02
+
     // Track which throughjumpers have been used to avoid duplicates
     const usedThroughJumpers = new Set<string>()
 
@@ -305,15 +344,21 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
 
       for (const candidate of solvedRoute.path) {
         const port = candidate.port
-        const point = {
-          x: port.d.x,
-          y: port.d.y,
-          z: 0,
-          insideJumperPad: Boolean(
-            port.region1?.d.isPad || port.region2?.d.isPad,
-          ),
-        }
-        routePoints.push(point)
+        const r1 = port.region1 as any
+        const r2 = port.region2 as any
+        const lastRegion = candidate.lastRegion as any
+
+        // Create two offset points entering each adjacent region
+        const offsetPoints = createRegionOffsetPoints({
+          baseX: port.d.x,
+          baseY: port.d.y,
+          r1Center: r1?.d?.center,
+          r2Center: r2?.d?.center,
+          cameFromRegion1: lastRegion?.regionId === r1?.regionId,
+          insideJumperPad: Boolean(r1?.d.isPad || r2?.d.isPad),
+          offsetDistance: OFFSET_POINT_INSIDE_REGION,
+        })
+        routePoints.push(...offsetPoints)
 
         // Check if we crossed through a jumper (lastRegion is a throughjumper)
         const region = candidate.lastRegion as any
@@ -472,6 +517,55 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
           OFFSET_DISTANCE,
         )
 
+        // Skip adding midpoints if the segment is inside jumper pads
+        if (outerSeg.isInsideJumperPad) {
+          continue
+        }
+
+        // Check if adding this midpoint would cause new intersections with other routes
+        // The new segments would be: (outerStart -> offsetMidpoint) and (offsetMidpoint -> outerEnd)
+        let wouldCauseIntersection = false
+        for (const otherSeg of allSegments) {
+          // Skip the outer segment itself and adjacent segments in the same route
+          if (
+            otherSeg.routeIndex === outerSeg.routeIndex &&
+            Math.abs(otherSeg.segmentIndex - outerSeg.segmentIndex) <= 1
+          ) {
+            continue
+          }
+
+          // Check if the new segment from start to midpoint intersects with other segment
+          if (
+            doSegmentsIntersect(
+              overlapInfo.outerStart,
+              offsetMidpoint,
+              otherSeg.start,
+              otherSeg.end,
+            )
+          ) {
+            wouldCauseIntersection = true
+            break
+          }
+
+          // Check if the new segment from midpoint to end intersects with other segment
+          if (
+            doSegmentsIntersect(
+              offsetMidpoint,
+              overlapInfo.outerEnd,
+              otherSeg.start,
+              otherSeg.end,
+            )
+          ) {
+            wouldCauseIntersection = true
+            break
+          }
+        }
+
+        // Skip adding this midpoint if it would cause new intersections
+        if (wouldCauseIntersection) {
+          continue
+        }
+
         // Add to insertions for the outer route (using Map to dedupe by segment index)
         if (!insertions.has(outerSeg.routeIndex)) {
           insertions.set(outerSeg.routeIndex, new Map())
@@ -515,27 +609,32 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
       return this.jumpers
     }
 
-    // Build a map of jumper center -> connection names that use it
-    // by examining the solved routes' jumpers
-    const jumperUsageMap = new Map<string, string[]>()
+    // Build a map of pad center -> connection names that use it
+    // by examining the solved routes' jumpers.
+    // Route jumpers have start/end at individual pad positions, so we use those
+    // directly as keys rather than the jumperLocation center.
+    const padUsageMap = new Map<string, string[]>()
+    const TOLERANCE = 0.01
+
     for (const route of this.solvedRoutes) {
       for (const jumper of route.jumpers) {
-        const centerX = (jumper.start.x + jumper.end.x) / 2
-        const centerY = (jumper.start.y + jumper.end.y) / 2
-        const key = `${centerX.toFixed(3)},${centerY.toFixed(3)}`
+        // Both start and end of a route jumper are pad positions
+        const positions = [jumper.start, jumper.end]
 
-        const connectedTo = jumperUsageMap.get(key) ?? []
-        // Add both connectionName and rootConnectionName if available
-        if (
-          route.rootConnectionName &&
-          !connectedTo.includes(route.rootConnectionName)
-        ) {
-          connectedTo.push(route.rootConnectionName)
+        for (const pos of positions) {
+          const key = `${pos.x.toFixed(3)},${pos.y.toFixed(3)}`
+          const connectedTo = padUsageMap.get(key) ?? []
+          if (
+            route.rootConnectionName &&
+            !connectedTo.includes(route.rootConnectionName)
+          ) {
+            connectedTo.push(route.rootConnectionName)
+          }
+          if (!connectedTo.includes(route.connectionName)) {
+            connectedTo.push(route.connectionName)
+          }
+          padUsageMap.set(key, connectedTo)
         }
-        if (!connectedTo.includes(route.connectionName)) {
-          connectedTo.push(route.connectionName)
-        }
-        jumperUsageMap.set(key, connectedTo)
       }
     }
 
@@ -544,15 +643,17 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
 
     for (const jumperLoc of this.jumperLocations) {
       const isHorizontal = jumperLoc.orientation === "horizontal"
-      const key = `${jumperLoc.center.x.toFixed(3)},${jumperLoc.center.y.toFixed(3)}`
-      const connectedTo = jumperUsageMap.get(key) ?? []
 
-      // Get pad obstacles from padRegions
+      // Get pad obstacles from padRegions, matching each pad to its connectedTo
       const pads: Obstacle[] = jumperLoc.padRegions.map((padRegion) => {
         const bounds = padRegion.d.bounds
         const padCenter = padRegion.d.center
         const padWidth = bounds.maxX - bounds.minX
         const padHeight = bounds.maxY - bounds.minY
+
+        // Look up connections for this specific pad position
+        const padKey = `${padCenter.x.toFixed(3)},${padCenter.y.toFixed(3)}`
+        const connectedTo = padUsageMap.get(padKey) ?? []
 
         return {
           type: "rect" as const,
