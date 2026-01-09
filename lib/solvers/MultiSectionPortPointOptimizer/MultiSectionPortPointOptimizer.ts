@@ -47,6 +47,7 @@ export interface MultiSectionPortPointOptimizerParams {
   capacityMeshNodes: CapacityMeshNode[]
   capacityMeshEdges: CapacityMeshEdge[]
   colorMap?: Record<string, string>
+  SHUFFLE_SEEDS_PER_SECTION?: number | null
   /** Results from the initial PortPointPathingSolver run */
   initialConnectionResults: ConnectionPathResult[]
   /** Assigned port points from initial run */
@@ -224,6 +225,8 @@ export class MultiSectionPortPointOptimizer extends BaseSolver {
 
   JUMPER_PF_FN_ENABLED = false
 
+  SHUFFLE_SEEDS_PER_SECTION: number | null | undefined = null
+
   /**
    * If true, always rip connections that have same-layer intersections,
    * even if they would otherwise be kept due to FRACTION_TO_REPLACE.
@@ -266,6 +269,7 @@ export class MultiSectionPortPointOptimizer extends BaseSolver {
     }
     this.JUMPER_PF_FN_ENABLED =
       params.JUMPER_PF_FN_ENABLED ?? this.JUMPER_PF_FN_ENABLED
+    this.SHUFFLE_SEEDS_PER_SECTION = params.SHUFFLE_SEEDS_PER_SECTION
 
     this.MAX_SECTION_ATTEMPTS *= this.effort
 
@@ -837,7 +841,9 @@ export class MultiSectionPortPointOptimizer extends BaseSolver {
       capacityMeshNodes: section.capacityMeshNodes,
       colorMap: this.colorMap,
       nodeMemoryPfMap: this.nodePfMap,
-      numShuffleSeeds: sectionSrj.connections.length * 2 * this.effort,
+      numShuffleSeeds:
+        this.SHUFFLE_SEEDS_PER_SECTION ??
+        sectionSrj.connections.length * 2 * this.effort,
       hyperParameters: {
         ...this.getHyperParametersForScheduleIndex(
           this.currentScheduleIndex,

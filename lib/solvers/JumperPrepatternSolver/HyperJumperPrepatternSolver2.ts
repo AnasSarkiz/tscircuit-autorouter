@@ -62,7 +62,7 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
     this.baseHyperParameters = params.hyperParameters ?? {}
     this.MAX_ITERATIONS = 1e6
     this.GREEDY_MULTIPLIER = 1
-    this.MIN_SUBSTEPS = 1
+    this.MIN_SUBSTEPS = 1000
   }
 
   getConstructorParams(): HyperJumperPrepatternSolver2Params {
@@ -80,10 +80,24 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
     )
 
     // 1x2_1206x4 requires ~8mm min and ~12mm max dimension
-    const canUse1x2 = minDimension >= 8 && maxDimension >= 12
+    const canUse1x2 = minDimension >= 6 && maxDimension >= 10
 
     // 2x2_1206x4 requires ~14x14mm
-    const canUse2x2 = minDimension >= 12
+    const canUse2x2 = minDimension >= 10
+
+    // 3x1_1206x4 requires ~6mm min and ~18mm max dimension (3 jumpers in a row)
+    const canUse3x1 = minDimension >= 6 && maxDimension >= 18
+
+    // 3x2_1206x4 requires ~10mm min and ~18mm max dimension
+    const canUse3x2 = minDimension >= 10 && maxDimension >= 18
+
+    // 3x3_1206x4 requires ~18x18mm
+    const canUse3x3 = minDimension >= 18 && maxDimension >= 18
+
+    // 4x4_1206x4 requires ~24x24mm
+    const canUse4x4 = minDimension >= 24 && maxDimension >= 24
+
+    const canUse6x4 = minDimension >= 24 && maxDimension >= 24
 
     const patternValues: Array<{ PATTERN_TYPE: HyperGraphPatternType }> = [
       { PATTERN_TYPE: "single_1206x4" },
@@ -97,6 +111,26 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
       patternValues.push({ PATTERN_TYPE: "2x2_1206x4" })
     }
 
+    if (canUse3x1) {
+      patternValues.push({ PATTERN_TYPE: "3x1_1206x4" })
+    }
+
+    if (canUse3x2) {
+      patternValues.push({ PATTERN_TYPE: "3x2_1206x4" })
+    }
+
+    if (canUse3x3) {
+      patternValues.push({ PATTERN_TYPE: "3x3_1206x4" })
+    }
+
+    if (canUse4x4) {
+      patternValues.push({ PATTERN_TYPE: "4x4_1206x4" })
+    }
+
+    if (canUse6x4) {
+      patternValues.push({ PATTERN_TYPE: "6x4_1206x4" })
+    }
+
     return [
       {
         name: "pattern",
@@ -106,7 +140,7 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
         name: "orientation",
         possibleValues: [
           { ORIENTATION: "vertical" },
-          // { ORIENTATION: "horizontal" },
+          { ORIENTATION: "horizontal" },
         ],
       },
     ]

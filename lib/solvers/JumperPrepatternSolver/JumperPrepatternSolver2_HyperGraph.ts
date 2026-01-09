@@ -29,6 +29,11 @@ export type HyperGraphPatternType =
   | "single_1206x4"
   | "1x2_1206x4"
   | "2x2_1206x4"
+  | "3x1_1206x4"
+  | "3x2_1206x4"
+  | "3x3_1206x4"
+  | "4x4_1206x4"
+  | "6x4_1206x4"
 
 export interface JumperPrepatternSolver2HyperParameters {
   /** Pattern type for jumper placement - "single_1206x4" (~8x8mm) or "2x2_1206x4" (~14x14mm) */
@@ -131,6 +136,21 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
 
   private _getPatternConfig(): { cols: number; rows: number } {
     const patternType = this.hyperParameters.PATTERN_TYPE ?? "single_1206x4"
+    if (patternType === "6x4_1206x4") {
+      return { cols: 6, rows: 4 }
+    }
+    if (patternType === "4x4_1206x4") {
+      return { cols: 4, rows: 4 }
+    }
+    if (patternType === "3x3_1206x4") {
+      return { cols: 3, rows: 3 }
+    }
+    if (patternType === "3x2_1206x4") {
+      return { cols: 3, rows: 2 }
+    }
+    if (patternType === "3x1_1206x4") {
+      return { cols: 3, rows: 1 }
+    }
     if (patternType === "2x2_1206x4") {
       return { cols: 2, rows: 2 }
     }
@@ -158,15 +178,15 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
     const baseGraph = generateJumperX4Grid({
       cols: patternConfig.cols,
       rows: patternConfig.rows,
-      marginX: 1.2,
-      marginY: 1.2,
+      marginX: Math.max(1.2, patternConfig.cols * 0.3),
+      marginY: Math.max(1.2, patternConfig.rows * 0.3),
       outerPaddingX: 0.4,
       outerPaddingY: 0.4,
       // parallelTracesUnderJumperCount: 2,
-      innerColChannelPointCount: 3,
-      innerRowChannelPointCount: 3,
-      outerChannelXPointCount: 5,
-      outerChannelYPointCount: 5,
+      innerColChannelPointCount: 3, // Math.min(3, 1 + patternConfig.cols),
+      innerRowChannelPointCount: 3, // Math.min(3, 1 + patternConfig.rows),
+      outerChannelXPointCount: 3, // Math.max(5, patternConfig.cols * 3),
+      outerChannelYPointCount: 3, // Math.max(5, patternConfig.rows * 3),
       regionsBetweenPads: true,
       orientation,
       bounds: nodeBounds,
@@ -229,6 +249,8 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
       },
       inputConnections: graphWithConnections.connections,
     })
+    // TODO multiply by effort
+    this.jumperGraphSolver.MAX_ITERATIONS *= 3
 
     return true
   }
