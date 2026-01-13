@@ -212,7 +212,7 @@ export class MultiSectionPortPointOptimizer extends BaseSolver {
   MAX_ATTEMPTS_PER_NODE = 100
 
   /** Maximum total number of section optimization attempts */
-  MAX_SECTION_ATTEMPTS = 500
+  MAX_SECTION_ATTEMPTS = 50
 
   /** Acceptable probability of failure threshold */
   ACCEPTABLE_PF = 0.05
@@ -893,8 +893,15 @@ export class MultiSectionPortPointOptimizer extends BaseSolver {
     // Add new results for fully contained connections
     this.connectionResults.push(...fullyContainedResults)
 
-    // Clear port points for fully re-routed connections from all nodes
+    // Clear port points for fully re-routed connections ONLY from nodes in the section
+    // This is critical: we only want to clear port points from nodes that are in the section,
+    // because we'll only be adding back port points for nodes in the section.
     for (const [nodeId, portPoints] of this.nodeAssignedPortPoints.entries()) {
+      // Only clear port points from nodes in the section
+      if (!_section.nodeIds.has(nodeId)) {
+        continue
+      }
+
       const remainingPortPoints = portPoints.filter(
         (pp) => !reRoutedConnectionNames.has(pp.connectionName),
       )
@@ -1254,6 +1261,10 @@ export class MultiSectionPortPointOptimizer extends BaseSolver {
 
     // Create and start PortPointPathingSolver for this section
     this.activeSubSolver = this.createSectionSolver(this.currentSection)
+  }
+
+  computeProgress(): number {
+    return this.sectionAttempts / this.MAX_SECTION_ATTEMPTS
   }
 
   visualize(): GraphicsObject {
