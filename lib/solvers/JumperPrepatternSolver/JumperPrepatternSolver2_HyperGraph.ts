@@ -6,7 +6,11 @@ import type {
   NodeWithPortPoints,
   PortPoint,
 } from "../../types/high-density-types"
-import type { Jumper as SrjJumper, Obstacle } from "../../types/srj-types"
+import type {
+  Jumper as SrjJumper,
+  Obstacle,
+  JumperType,
+} from "../../types/srj-types"
 import { safeTransparentize } from "../colors"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import {
@@ -16,15 +20,20 @@ import {
 import {
   JumperGraphSolver,
   generateJumperX4Grid,
+  generateJumperGrid,
   createGraphWithConnectionsFromBaseGraph,
+  applyTransformToGraph,
+  calculateGraphBounds,
   type JRegion,
   type JPort,
+  type JumperGraph,
 } from "@tscircuit/hypergraph"
 import { CurvyTraceSolver } from "@tscircuit/curvy-trace-solver"
 import type {
   CurvyTraceProblem,
   Obstacle as CurvyObstacle,
 } from "@tscircuit/curvy-trace-solver"
+import { translate } from "transformation-matrix"
 
 export type Point2D = { x: number; y: number }
 
@@ -35,6 +44,8 @@ export interface JumperPrepatternSolver2HyperParameters {
   ROWS?: number
   /** Orientation of jumpers - "horizontal" or "vertical" */
   ORIENTATION?: "horizontal" | "vertical"
+  /** Jumper type - "1206x4" or "0603". Defaults to "1206x4" */
+  JUMPER_TYPE?: JumperType
 }
 
 export interface JumperPrepatternSolver2Params {
@@ -179,10 +190,115 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
     }
   }
 
+  /**
+   * Generate a 0603 jumper grid sized to fit the node bounds.
+   * generateJumperGrid doesn't support bounds/orientation, so we calculate
+   * the outer padding dynamically to ensure the grid extends to the node boundaries.
+   * NO SCALING - the outer padding is calculated to fill the space.
+   */
+  private _generate0603Grid(
+    patternConfig: { cols: number; rows: number },
+    orientation: "horizontal" | "vertical",
+    nodeBounds: { minX: number; maxX: number; minY: number; maxY: number },
+  ): JumperGraph | null {
+    // For horizontal orientation, swap cols and rows
+    const effectiveCols =
+      orientation === "horizontal" ? patternConfig.rows : patternConfig.cols
+    const effectiveRows =
+      orientation === "horizontal" ? patternConfig.cols : patternConfig.rows
+
+    const nodeWidth = nodeBounds.maxX - nodeBounds.minX
+    const nodeHeight = nodeBounds.maxY - nodeBounds.minY
+
+    const margin0603 = 0.5
+
+    // First, generate a minimal grid to measure core size
+    const minimalGraph = generateJumperGrid({
+      cols: effectiveCols,
+      rows: effectiveRows,
+      marginX: margin0603,
+      marginY: margin0603,
+      innerColChannelPointCount: 2,
+      innerRowChannelPointCount: 2,
+      outerPaddingX: 0.1, // Minimal padding
+      outerPaddingY: 0.1,
+      outerChannelXPoints: 3,
+      outerChannelYPoints: 3,
+    })
+    const minimalBounds = calculateGraphBounds(minimalGraph.regions)
+    const coreWidth = minimalBounds.maxX - minimalBounds.minX
+    const coreHeight = minimalBounds.maxY - minimalBounds.minY
+
+    // Calculate padding needed on each side to fill the node bounds
+    // The outer padding is added to EACH side, so we need half the difference
+    const requiredPaddingX = Math.max(0.3, (nodeWidth - coreWidth) / 2 + 0.1)
+    const requiredPaddingY = Math.max(0.3, (nodeHeight - coreHeight) / 2 + 0.1)
+
+    // Calculate channel points based on size (more points for larger areas)
+    const outerChannelXPoints = Math.max(3, Math.ceil(requiredPaddingX / 0.5))
+    const outerChannelYPoints = Math.max(3, Math.ceil(requiredPaddingY / 0.5))
+
+    // Generate the final grid with calculated padding
+    const rawGraph = generateJumperGrid({
+      cols: effectiveCols,
+      rows: effectiveRows,
+      marginX: margin0603,
+      marginY: margin0603,
+      innerColChannelPointCount: 2,
+      innerRowChannelPointCount: 2,
+      outerPaddingX: requiredPaddingX,
+      outerPaddingY: requiredPaddingY,
+      outerChannelXPoints,
+      outerChannelYPoints,
+    })
+
+    // Convert to JumperGraph format
+    const baseGraph: JumperGraph = {
+      regions: rawGraph.regions,
+      ports: rawGraph.ports,
+      jumperLocations: [],
+    }
+
+    // Calculate bounds of the generated graph
+    const graphBounds = calculateGraphBounds(baseGraph.regions)
+
+    // Calculate the center of the graph and node
+    const graphCenterX = (graphBounds.minX + graphBounds.maxX) / 2
+    const graphCenterY = (graphBounds.minY + graphBounds.maxY) / 2
+    const nodeCenterX = (nodeBounds.minX + nodeBounds.maxX) / 2
+    const nodeCenterY = (nodeBounds.minY + nodeBounds.maxY) / 2
+
+    // Translation only - NO SCALING
+    const transformMatrix = translate(
+      nodeCenterX - graphCenterX,
+      nodeCenterY - graphCenterY,
+    )
+
+    // Apply transformation to the graph
+    const transformedGraph = applyTransformToGraph(baseGraph, transformMatrix)
+
+    // Extract jumper locations from pad regions
+    // For 0603, each pad is its own jumper location
+    const jumperLocations: JumperGraph["jumperLocations"] = []
+    for (const region of transformedGraph.regions) {
+      if (region.d?.isPad) {
+        jumperLocations.push({
+          center: region.d.center,
+          orientation: orientation,
+          padRegions: [region],
+        })
+      }
+    }
+    transformedGraph.jumperLocations = jumperLocations
+
+    return transformedGraph
+  }
+
   private _initializeGraph(): boolean {
     const node = this.nodeWithPortPoints
     const patternConfig = this._getPatternConfig()
     const orientation = this.hyperParameters.ORIENTATION ?? "vertical"
+    const jumperType = this.hyperParameters.JUMPER_TYPE ?? "1206x4"
 
     // Calculate node bounds
     const nodeBounds = {
@@ -193,29 +309,43 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
     }
     this.graphBounds = nodeBounds
 
-    // Generate the base jumper grid to fit the node bounds exactly
-    const baseGraph = generateJumperX4Grid({
-      cols: patternConfig.cols,
-      rows: patternConfig.rows,
-      marginX: Math.max(1.2, patternConfig.cols * 0.3),
-      marginY: Math.max(1.2, patternConfig.rows * 0.3),
-      outerPaddingX: 0.4,
-      outerPaddingY: 0.4,
-      parallelTracesUnderJumperCount: 2,
-      innerColChannelPointCount: 3, // Math.min(3, 1 + patternConfig.cols),
-      innerRowChannelPointCount: 3, // Math.min(3, 1 + patternConfig.rows),
-      outerChannelXPointCount: 3, // Math.max(5, patternConfig.cols * 3),
-      outerChannelYPointCount: 3, // Math.max(5, patternConfig.rows * 3),
-      regionsBetweenPads: true,
-      orientation,
-      bounds: nodeBounds,
-    })
+    let baseGraph: JumperGraph
+
+    if (jumperType === "0603") {
+      // Generate 0603 grid with transformation
+      const graph = this._generate0603Grid(
+        patternConfig,
+        orientation,
+        nodeBounds,
+      )
+      if (!graph) {
+        this.error = `0603 grid (${patternConfig.cols}x${patternConfig.rows}) is too large to fit in node bounds`
+        this.failed = true
+        return false
+      }
+      baseGraph = graph
+    } else {
+      // Generate the base 1206x4 jumper grid to fit the node bounds exactly
+      baseGraph = generateJumperX4Grid({
+        cols: patternConfig.cols,
+        rows: patternConfig.rows,
+        marginX: Math.max(1.2, patternConfig.cols * 0.3),
+        marginY: Math.max(1.2, patternConfig.rows * 0.3),
+        outerPaddingX: 0.4,
+        outerPaddingY: 0.4,
+        parallelTracesUnderJumperCount: 2,
+        innerColChannelPointCount: 3,
+        innerRowChannelPointCount: 3,
+        outerChannelXPointCount: 3,
+        outerChannelYPointCount: 3,
+        regionsBetweenPads: true,
+        orientation,
+        bounds: nodeBounds,
+      })
+    }
 
     // Check if baseGraph bounds exceed node bounds - fail immediately if so
-    // Compute bounds from regions since JumperGraph doesn't have a bounds property
     if (baseGraph.regions.length > 0) {
-      // TODO import calculateGraphBounds from @tscircuit/hypergraph (when
-      // exported)
       let padMinX = Infinity
       let padMaxX = -Infinity
       let padMinY = Infinity
@@ -231,7 +361,7 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
         }
       }
 
-      const paddingAroundPads = 1
+      const paddingAroundPads = jumperType === "0603" ? 0.5 : 1
 
       if (
         padMinX - paddingAroundPads < nodeBounds.minX ||
@@ -591,19 +721,24 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
           const boundsHeight = bounds.maxY - bounds.minY
           const isHorizontal = boundsWidth > boundsHeight
 
+          // Determine footprint based on jumper type
+          const jumperType = this.hyperParameters.JUMPER_TYPE ?? "1206x4"
+          const footprint: JumperFootprint =
+            jumperType === "0603" ? "0603" : "1206x4_pair"
+
           if (isHorizontal) {
             jumpers.push({
               route_type: "jumper",
               start: { x: bounds.minX, y: center.y },
               end: { x: bounds.maxX, y: center.y },
-              footprint: "1206x4_pair",
+              footprint,
             })
           } else {
             jumpers.push({
               route_type: "jumper",
               start: { x: center.x, y: bounds.minY },
               end: { x: center.x, y: bounds.maxY },
-              footprint: "1206x4_pair",
+              footprint,
             })
           }
         }
@@ -864,7 +999,10 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
     }
 
     // Convert all jumperLocations to SRJ Jumpers
-    const dims = JUMPER_DIMENSIONS["1206x4_pair"]
+    const jumperType = this.hyperParameters.JUMPER_TYPE ?? "1206x4"
+    const dimsKey: JumperFootprint =
+      jumperType === "0603" ? "0603" : "1206x4_pair"
+    const dims = JUMPER_DIMENSIONS[dimsKey]
 
     for (const jumperLoc of this.jumperLocations) {
       const isHorizontal = jumperLoc.orientation === "horizontal"
@@ -891,7 +1029,7 @@ export class JumperPrepatternSolver2_HyperGraph extends BaseSolver {
       })
 
       const srjJumper: SrjJumper = {
-        jumper_footprint: "1206x4",
+        jumper_footprint: jumperType,
         center: jumperLoc.center,
         orientation: jumperLoc.orientation,
         width: isHorizontal ? dims.length : dims.width,

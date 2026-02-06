@@ -367,6 +367,7 @@ export class AssignableAutoroutingPipeline3 extends BaseSolver {
         connMap: cms.connMap,
         capacityMeshNodes: cms.capacityNodes ?? [],
         capacityMeshEdges: cms.capacityEdges ?? [],
+        availableJumperTypes: cms.srj.availableJumperTypes,
       },
     ]),
     definePipelineStep(

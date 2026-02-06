@@ -16,7 +16,7 @@ import { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import { HighDensityHyperParameters } from "../../solvers/HighDensitySolver/HighDensityHyperParameters"
 import { getIntraNodeCrossingsUsingCircle } from "lib/utils/getIntraNodeCrossingsUsingCircle"
 import { JUMPER_DIMENSIONS } from "../../utils/jumperSizes"
-import type { Jumper as SrjJumper } from "../../types/srj-types"
+import type { Jumper as SrjJumper, JumperType } from "../../types/srj-types"
 import type {
   CapacityMeshNode,
   CapacityMeshEdge,
@@ -82,6 +82,7 @@ export class JumperHighDensitySolver extends BaseSolver {
   viaDiameter: number
   connMap?: ConnectivityMap
   hyperParameters?: Partial<HighDensityHyperParameters>
+  availableJumperTypes: JumperType[]
 
   // Capacity mesh data for obstacle computation
   capacityMeshNodes: CapacityMeshNode[]
@@ -118,6 +119,7 @@ export class JumperHighDensitySolver extends BaseSolver {
     hyperParameters,
     capacityMeshNodes = [],
     capacityMeshEdges = [],
+    availableJumperTypes,
   }: {
     nodePortPoints: NodeWithPortPoints[]
     colorMap?: Record<string, string>
@@ -127,6 +129,8 @@ export class JumperHighDensitySolver extends BaseSolver {
     hyperParameters?: Partial<HighDensityHyperParameters>
     capacityMeshNodes?: CapacityMeshNode[]
     capacityMeshEdges?: CapacityMeshEdge[]
+    /** Available jumper types. Defaults to ["0603"] */
+    availableJumperTypes?: JumperType[]
   }) {
     super()
     this.allNodes = [...nodePortPoints]
@@ -138,6 +142,7 @@ export class JumperHighDensitySolver extends BaseSolver {
     this.hyperParameters = hyperParameters
     this.capacityMeshNodes = capacityMeshNodes
     this.capacityMeshEdges = capacityMeshEdges
+    this.availableJumperTypes = availableJumperTypes ?? ["0603"]
 
     // Build lookup maps for capacity mesh data
     this.capacityMeshNodeMap = new Map(
@@ -430,13 +435,14 @@ export class JumperHighDensitySolver extends BaseSolver {
       // })
 
       // HyperJumperPrepatternSolver2 tries multiple variants:
-      // - single_1206x4 + vertical/horizontal
-      // - 2x2_1206x4 + vertical/horizontal (if node >= 14mm)
+      // - For 0603: various row/col combinations (1x1, 1x2, 2x1, 1x4, 4x1, etc.)
+      // - For 1206x4: single_1206x4 + vertical/horizontal, 2x2_1206x4 + vertical/horizontal
       const solver = new HyperJumperPrepatternSolver2({
         nodeWithPortPoints: node,
         colorMap: this.colorMap,
         traceWidth: this.traceWidth,
         connMap: this.connMap,
+        availableJumperTypes: this.availableJumperTypes,
       })
       this.jumperSolvers.push(solver)
     }
@@ -522,6 +528,7 @@ export class JumperHighDensitySolver extends BaseSolver {
       hyperParameters: this.hyperParameters,
       capacityMeshNodes: this.capacityMeshNodes,
       capacityMeshEdges: this.capacityMeshEdges,
+      availableJumperTypes: this.availableJumperTypes,
     }
   }
 
