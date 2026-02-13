@@ -8,6 +8,7 @@ import {
   pointToSegmentDistance,
   doSegmentsIntersect,
   clamp,
+  pointToBoundsDistance,
 } from "@tscircuit/math-utils"
 import type { GraphicsObject } from "graphics-debug"
 import { getIntraNodeCrossings } from "lib/utils/getIntraNodeCrossings"
@@ -79,6 +80,18 @@ export class SingleTransitionCrossingRouteSolver extends BaseSolver {
     if (this.routes.length !== 2) {
       this.failed = true
       this.error = `Expected 2 routes, but got ${this.routes.length}`
+      return
+    }
+
+    const hasInteriorPoint = this.routes.some(
+      (route) =>
+        pointToBoundsDistance(route.A, this.bounds) > 1e-6 ||
+        pointToBoundsDistance(route.B, this.bounds) > 1e-6,
+    )
+    if (hasInteriorPoint) {
+      this.failed = true
+      this.error =
+        "SingleTransitionCrossingRouteSolver only supports boundary port points"
       return
     }
 
