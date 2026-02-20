@@ -1,13 +1,12 @@
-import { ViaHighDensitySolver } from "lib/solvers/ViaHighDensitySolver"
+import { FixedTopologyHighDensityIntraNodeSolver } from "lib/solvers/FixedTopologyHighDensityIntraNodeSolver"
 import { GenericSolverDebugger } from "lib/testing/GenericSolverDebugger"
 import input from "./via-high-density03-input.json"
 
 export default () => {
   const createSolver = () => {
-    return new ViaHighDensitySolver({
+    return new FixedTopologyHighDensityIntraNodeSolver({
       nodeWithPortPoints: input.nodeWithPortPoints as any,
       colorMap: input.colorMap,
-      hyperParameters: input.hyperParameters,
       traceWidth: input.traceWidth,
     })
   }

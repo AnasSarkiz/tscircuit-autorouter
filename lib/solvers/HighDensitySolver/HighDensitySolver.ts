@@ -11,10 +11,6 @@ import { combineVisualizations } from "lib/utils/combineVisualizations"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import { mergeRouteSegments } from "lib/utils/mergeRouteSegments"
 import { getGlobalInMemoryCache } from "lib/cache/setupGlobalCaches"
-import {
-  ViaHighDensitySolver,
-  ViaHighDensityHyperParameters,
-} from "../ViaHighDensitySolver"
 
 export class HighDensitySolver extends BaseSolver {
   override getSolverName(): string {
@@ -31,22 +27,10 @@ export class HighDensitySolver extends BaseSolver {
   viaDiameter: number
   traceWidth: number
 
-  failedSolvers: (
-    | IntraNodeRouteSolver
-    | HyperSingleIntraNodeSolver
-    | ViaHighDensitySolver
-  )[]
-  activeSubSolver:
-    | IntraNodeRouteSolver
-    | HyperSingleIntraNodeSolver
-    | ViaHighDensitySolver
-    | null = null
+  failedSolvers: (IntraNodeRouteSolver | HyperSingleIntraNodeSolver)[]
+  activeSubSolver: IntraNodeRouteSolver | HyperSingleIntraNodeSolver | null =
+    null
   connMap?: ConnectivityMap
-
-  /** Enable via high-density routing using ViaGraphSolver */
-  useViaRouting: boolean
-  /** Hyper parameters for ViaHighDensitySolver when useViaRouting is enabled */
-  viaHyperParameters?: ViaHighDensityHyperParameters
 
   constructor({
     nodePortPoints,
@@ -54,18 +38,12 @@ export class HighDensitySolver extends BaseSolver {
     connMap,
     viaDiameter,
     traceWidth,
-    useViaRouting,
-    viaHyperParameters,
   }: {
     nodePortPoints: NodeWithPortPoints[]
     colorMap?: Record<string, string>
     connMap?: ConnectivityMap
     viaDiameter?: number
     traceWidth?: number
-    /** Enable via high-density routing using ViaGraphSolver from @tscircuit/hypergraph */
-    useViaRouting?: boolean
-    /** Hyper parameters for ViaHighDensitySolver when useViaRouting is enabled */
-    viaHyperParameters?: ViaHighDensityHyperParameters
   }) {
     super()
     this.unsolvedNodePortPoints = nodePortPoints
@@ -76,8 +54,6 @@ export class HighDensitySolver extends BaseSolver {
     this.MAX_ITERATIONS = 1e6
     this.viaDiameter = viaDiameter ?? this.defaultViaDiameter
     this.traceWidth = traceWidth ?? this.defaultTraceThickness
-    this.useViaRouting = useViaRouting ?? false
-    this.viaHyperParameters = viaHyperParameters
   }
 
   /**
@@ -89,22 +65,7 @@ export class HighDensitySolver extends BaseSolver {
     if (this.activeSubSolver) {
       this.activeSubSolver.step()
       if (this.activeSubSolver.solved) {
-        // Handle different solver output types
-        if (this.activeSubSolver instanceof ViaHighDensitySolver) {
-          // Convert ViaHighDensitySolver output to HighDensityIntraNodeRoute format
-          for (const route of this.activeSubSolver.solvedRoutes) {
-            this.routes.push({
-              connectionName: route.connectionName,
-              rootConnectionName: route.rootConnectionName,
-              traceThickness: route.traceThickness,
-              viaDiameter: this.viaDiameter,
-              route: route.route,
-              vias: route.viaRegions.map((v) => v.center),
-            })
-          }
-        } else {
-          this.routes.push(...this.activeSubSolver.solvedRoutes)
-        }
+        this.routes.push(...this.activeSubSolver.solvedRoutes)
         this.activeSubSolver = null
       } else if (this.activeSubSolver.failed) {
         this.failedSolvers.push(this.activeSubSolver)
@@ -129,24 +90,13 @@ export class HighDensitySolver extends BaseSolver {
     }
     const node = this.unsolvedNodePortPoints.pop()!
 
-    // Use ViaHighDensitySolver when useViaRouting is enabled
-    if (this.useViaRouting) {
-      this.activeSubSolver = new ViaHighDensitySolver({
-        nodeWithPortPoints: node,
-        colorMap: this.colorMap,
-        connMap: this.connMap,
-        traceWidth: this.traceWidth,
-        hyperParameters: this.viaHyperParameters,
-      })
-    } else {
-      this.activeSubSolver = new HyperSingleIntraNodeSolver({
-        nodeWithPortPoints: node,
-        colorMap: this.colorMap,
-        connMap: this.connMap,
-        viaDiameter: this.viaDiameter,
-        traceWidth: this.traceWidth,
-      })
-    }
+    this.activeSubSolver = new HyperSingleIntraNodeSolver({
+      nodeWithPortPoints: node,
+      colorMap: this.colorMap,
+      connMap: this.connMap,
+      viaDiameter: this.viaDiameter,
+      traceWidth: this.traceWidth,
+    })
     this.updateCacheStats()
   }
 

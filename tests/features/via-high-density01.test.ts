@@ -1,13 +1,12 @@
 import { expect, test } from "bun:test"
-import { ViaHighDensitySolver } from "lib/solvers/ViaHighDensitySolver"
+import { FixedTopologyHighDensityIntraNodeSolver } from "lib/solvers/FixedTopologyHighDensityIntraNodeSolver"
 import input01 from "../../fixtures/features/via-high-density/via-high-density01-input.json" with {
   type: "json",
 }
-test("ViaHighDensitySolver01 - basic two crossing connections", () => {
-  const solver = new ViaHighDensitySolver({
+test("FixedTopologyHighDensityIntraNodeSolver01 - basic two crossing connections", () => {
+  const solver = new FixedTopologyHighDensityIntraNodeSolver({
     nodeWithPortPoints: input01.nodeWithPortPoints as any,
     colorMap: input01.colorMap,
-    hyperParameters: input01.hyperParameters,
     traceWidth: input01.traceWidth,
   })
 

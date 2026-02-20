@@ -77,31 +77,3 @@ export type HighDensityIntraNodeRouteWithJumpers = {
   route: Array<{ x: number; y: number; z: number }>
   jumpers: Jumper[]
 }
-
-/**
- * A via region used in via high-density routing.
- * Via regions are exclusive - only one net can use each region.
- */
-export type ViaRegion = {
-  /** Unique identifier for this via region */
-  viaRegionId: string
-  /** Center position of the via */
-  center: { x: number; y: number }
-  /** Diameter of the via */
-  diameter: number
-  /** Connection names that route through this via region */
-  connectedTo: string[]
-}
-
-/**
- * An intra-node route that uses via regions for multi-layer routing.
- * Similar to HighDensityIntraNodeRouteWithJumpers but for vias.
- */
-export type HighDensityIntraNodeRouteWithVias = {
-  connectionName: string
-  rootConnectionName?: string
-  traceThickness: number
-  route: Array<{ x: number; y: number; z: number }>
-  /** Via regions used by this route */
-  viaRegions: ViaRegion[]
-}
