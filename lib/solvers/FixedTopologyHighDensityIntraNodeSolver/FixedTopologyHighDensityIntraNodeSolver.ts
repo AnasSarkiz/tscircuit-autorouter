@@ -14,6 +14,7 @@ import type {
   PortPoint,
 } from "../../types/high-density-types"
 import { BaseSolver } from "../BaseSolver"
+import { buildColorMapFromPortPoints } from "./buildColorMapFromPortPoints"
 
 export type ViaRegion = {
   viaRegionId: string
@@ -70,38 +71,12 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
 
     // Initialize colorMap if not provided
     if (Object.keys(this.colorMap).length === 0) {
-      this.colorMap = this._buildColorMap()
+      this.colorMap = buildColorMapFromPortPoints(this.nodeWithPortPoints)
     }
   }
 
   getConstructorParams(): FixedTopologyHighDensityIntraNodeSolverParams {
     return this.constructorParams
-  }
-
-  private _buildColorMap(): Record<string, string> {
-    const colors = [
-      "#e6194b",
-      "#3cb44b",
-      "#ffe119",
-      "#4363d8",
-      "#f58231",
-      "#911eb4",
-      "#46f0f0",
-      "#f032e6",
-      "#bcf60c",
-      "#fabebe",
-    ]
-    const colorMap: Record<string, string> = {}
-    const connectionNames = new Set<string>()
-    for (const pp of this.nodeWithPortPoints.portPoints) {
-      connectionNames.add(pp.connectionName)
-    }
-    let i = 0
-    for (const name of Array.from(connectionNames)) {
-      colorMap[name] = colors[i % colors.length]
-      i++
-    }
-    return colorMap
   }
 
   private _initializeGraph(): ViaGraphSolver | null {
@@ -193,30 +168,30 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
     }
   }
 
-  private _buildViaPositionLookup(): Array<{
+  private _getAllViaPositions(): Array<{
     position: { x: number; y: number }
     diameter: number
   }> {
-    const lookup: Array<{
+    const allViaPositions: Array<{
       position: { x: number; y: number }
       diameter: number
     }> = []
 
     for (const vias of Object.values(this.tiledViasByNet)) {
       for (const via of vias) {
-        lookup.push({
+        allViaPositions.push({
           position: via.position,
           diameter: via.diameter,
         })
       }
     }
 
-    return lookup
+    return allViaPositions
   }
 
   private _findClosestVia(
     port: JPort,
-    viaLookup: ReturnType<typeof this._buildViaPositionLookup>,
+    allViaPositions: ReturnType<typeof this._getAllViaPositions>,
   ): { position: { x: number; y: number }; diameter: number } | null {
     let closest: {
       position: { x: number; y: number }
@@ -224,7 +199,7 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
     } | null = null
     let minDistSquared = Infinity
 
-    for (const via of viaLookup) {
+    for (const via of allViaPositions) {
       const dx = via.position.x - port.d.x
       const dy = via.position.y - port.d.y
       const distSquared = dx * dx + dy * dy
@@ -304,10 +279,10 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
     connectionName: string,
     regionId: string,
     port: JPort | null,
-    viaLookup: ReturnType<typeof this._buildViaPositionLookup>,
+    allViaPositions: ReturnType<typeof this._getAllViaPositions>,
   ) {
     if (!port) return
-    const viaInfo = this._findClosestVia(port, viaLookup)
+    const viaInfo = this._findClosestVia(port, allViaPositions)
     if (!viaInfo) return
 
     this._upsertGlobalVia(
@@ -327,7 +302,7 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
 
   private _processResults(viaGraphSolver: ViaGraphSolver) {
     this.solvedRoutes = []
-    const viaLookup = this._buildViaPositionLookup()
+    const allViaPositions = this._getAllViaPositions()
     const viasByPosition: Map<
       string,
       {
@@ -367,7 +342,7 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
               connectionName,
               currentViaRegionId,
               candidate.lastPort as JPort | null,
-              viaLookup,
+              allViaPositions,
             )
             currentViaRegionId = null
             currentViaEntryPort = null
@@ -387,7 +362,7 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
             connectionName,
             currentViaRegionId,
             candidate.lastPort as JPort | null,
-            viaLookup,
+            allViaPositions,
           )
         }
 
@@ -399,7 +374,7 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
           connectionName,
           nextViaRegionId,
           currentViaEntryPort,
-          viaLookup,
+          allViaPositions,
         )
       }
 
@@ -412,7 +387,7 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
             connectionName,
             currentViaRegionId,
             lastCandidate.port as JPort,
-            viaLookup,
+            allViaPositions,
           )
         }
       }
