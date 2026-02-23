@@ -1,25 +1,25 @@
+import { ConnectivityMap } from "circuit-json-to-connectivity-map"
 import type { GraphicsObject } from "graphics-debug"
 import type {
   HighDensityIntraNodeRouteWithJumpers,
   NodeWithPortPoints,
 } from "../../types/high-density-types"
-import type { Jumper as SrjJumper, JumperType } from "../../types/srj-types"
+import type { JumperType, Jumper as SrjJumper } from "../../types/srj-types"
 import {
   HyperParameterSupervisorSolver,
   SupervisedSolver,
 } from "../HyperParameterSupervisorSolver"
 import {
-  JumperPrepatternSolver2_HyperGraph,
-  type JumperPrepatternSolver2Params,
   JumperPrepatternSolver2HyperParameters,
+  type JumperPrepatternSolver2Params,
+  JumperPrepatternSolver2_HyperGraph,
 } from "./JumperPrepatternSolver2_HyperGraph"
-import { ConnectivityMap } from "circuit-json-to-connectivity-map"
-import { calculateMax0603Config } from "./estimate0603GridBounds"
 
 export interface HyperJumperPrepatternSolver2Params {
   nodeWithPortPoints: NodeWithPortPoints
   colorMap?: Record<string, string>
   traceWidth?: number
+  obstacleMargin?: number
   connMap?: ConnectivityMap
   hyperParameters?: JumperPrepatternSolver2HyperParameters
   /** Available jumper types. Defaults to ["0603"] */
@@ -31,6 +31,8 @@ type VariantHyperParameters = {
   ROWS: number
   ORIENTATION: "horizontal" | "vertical"
   JUMPER_TYPE: JumperType
+  PATTERN?: "grid" | "staggered"
+  TRACE_CHANNELS_BETWEEN_JUMPERS?: number
 }
 
 /**
@@ -48,6 +50,7 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
   nodeWithPortPoints: NodeWithPortPoints
   colorMap: Record<string, string>
   traceWidth: number
+  obstacleMargin: number
   connMap?: ConnectivityMap
   baseHyperParameters?: JumperPrepatternSolver2HyperParameters
   availableJumperTypes: JumperType[]
@@ -63,6 +66,7 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
     this.nodeWithPortPoints = params.nodeWithPortPoints
     this.colorMap = params.colorMap ?? {}
     this.traceWidth = params.traceWidth ?? 0.15
+    this.obstacleMargin = params.obstacleMargin ?? 0.15
     this.connMap = params.connMap
     this.baseHyperParameters = params.hyperParameters ?? {}
     this.availableJumperTypes = params.availableJumperTypes ?? ["0603"]
@@ -83,37 +87,170 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
 
     const node = this.nodeWithPortPoints
 
-    // 0603 max configs for each orientation (single value each)
-    const max0603Vert = calculateMax0603Config(
+    const max0603VertOneTrace = this.calculateMax0603ConfigWithTraceChannels(
       node.width,
       node.height,
       "vertical",
+      1,
     )
     defs.push({
-      name: "0603_max_rows_and_cols_vert",
+      name: "0603_max_rows_and_cols_vert_1trace_grid",
       possibleValues: [
         {
           JUMPER_TYPE: "0603" as JumperType,
-          COLS: max0603Vert.cols,
-          ROWS: max0603Vert.rows,
+          COLS: max0603VertOneTrace.cols,
+          ROWS: max0603VertOneTrace.rows,
           ORIENTATION: "vertical" as const,
+          PATTERN: "grid" as const,
+          TRACE_CHANNELS_BETWEEN_JUMPERS: 1,
         },
       ],
     })
 
-    const max0603Horz = calculateMax0603Config(
-      node.width,
-      node.height,
-      "horizontal",
-    )
+    const max0603VertOneTraceStaggered =
+      this.calculateMax0603ConfigWithTraceChannels(
+        node.width,
+        node.height,
+        "vertical",
+        1,
+        "staggered",
+      )
     defs.push({
-      name: "0603_max_rows_and_cols_horz",
+      name: "0603_max_rows_and_cols_vert_1trace_staggered",
       possibleValues: [
         {
           JUMPER_TYPE: "0603" as JumperType,
-          COLS: max0603Horz.cols,
-          ROWS: max0603Horz.rows,
+          COLS: max0603VertOneTraceStaggered.cols,
+          ROWS: max0603VertOneTraceStaggered.rows,
+          ORIENTATION: "vertical" as const,
+          PATTERN: "staggered" as const,
+          TRACE_CHANNELS_BETWEEN_JUMPERS: 1,
+        },
+      ],
+    })
+
+    const max0603VertTwoTrace = this.calculateMax0603ConfigWithTraceChannels(
+      node.width,
+      node.height,
+      "vertical",
+      2,
+    )
+    defs.push({
+      name: "0603_max_rows_and_cols_vert_2trace_grid",
+      possibleValues: [
+        {
+          JUMPER_TYPE: "0603" as JumperType,
+          COLS: max0603VertTwoTrace.cols,
+          ROWS: max0603VertTwoTrace.rows,
+          ORIENTATION: "vertical" as const,
+          PATTERN: "grid" as const,
+          TRACE_CHANNELS_BETWEEN_JUMPERS: 2,
+        },
+      ],
+    })
+
+    const max0603VertTwoTraceStaggered =
+      this.calculateMax0603ConfigWithTraceChannels(
+        node.width,
+        node.height,
+        "vertical",
+        2,
+        "staggered",
+      )
+    defs.push({
+      name: "0603_max_rows_and_cols_vert_2trace_staggered",
+      possibleValues: [
+        {
+          JUMPER_TYPE: "0603" as JumperType,
+          COLS: max0603VertTwoTraceStaggered.cols,
+          ROWS: max0603VertTwoTraceStaggered.rows,
+          ORIENTATION: "vertical" as const,
+          PATTERN: "staggered" as const,
+          TRACE_CHANNELS_BETWEEN_JUMPERS: 2,
+        },
+      ],
+    })
+
+    const max0603HorzOneTrace = this.calculateMax0603ConfigWithTraceChannels(
+      node.width,
+      node.height,
+      "horizontal",
+      1,
+    )
+    defs.push({
+      name: "0603_max_rows_and_cols_horz_1trace_grid",
+      possibleValues: [
+        {
+          JUMPER_TYPE: "0603" as JumperType,
+          COLS: max0603HorzOneTrace.cols,
+          ROWS: max0603HorzOneTrace.rows,
           ORIENTATION: "horizontal" as const,
+          PATTERN: "grid" as const,
+          TRACE_CHANNELS_BETWEEN_JUMPERS: 1,
+        },
+      ],
+    })
+
+    const max0603HorzOneTraceStaggered =
+      this.calculateMax0603ConfigWithTraceChannels(
+        node.width,
+        node.height,
+        "horizontal",
+        1,
+        "staggered",
+      )
+    defs.push({
+      name: "0603_max_rows_and_cols_horz_1trace_staggered",
+      possibleValues: [
+        {
+          JUMPER_TYPE: "0603" as JumperType,
+          COLS: max0603HorzOneTraceStaggered.cols,
+          ROWS: max0603HorzOneTraceStaggered.rows,
+          ORIENTATION: "horizontal" as const,
+          PATTERN: "staggered" as const,
+          TRACE_CHANNELS_BETWEEN_JUMPERS: 1,
+        },
+      ],
+    })
+
+    const max0603HorzTwoTrace = this.calculateMax0603ConfigWithTraceChannels(
+      node.width,
+      node.height,
+      "horizontal",
+      2,
+    )
+    defs.push({
+      name: "0603_max_rows_and_cols_horz_2trace_grid",
+      possibleValues: [
+        {
+          JUMPER_TYPE: "0603" as JumperType,
+          COLS: max0603HorzTwoTrace.cols,
+          ROWS: max0603HorzTwoTrace.rows,
+          ORIENTATION: "horizontal" as const,
+          PATTERN: "grid" as const,
+          TRACE_CHANNELS_BETWEEN_JUMPERS: 2,
+        },
+      ],
+    })
+
+    const max0603HorzTwoTraceStaggered =
+      this.calculateMax0603ConfigWithTraceChannels(
+        node.width,
+        node.height,
+        "horizontal",
+        2,
+        "staggered",
+      )
+    defs.push({
+      name: "0603_max_rows_and_cols_horz_2trace_staggered",
+      possibleValues: [
+        {
+          JUMPER_TYPE: "0603" as JumperType,
+          COLS: max0603HorzTwoTraceStaggered.cols,
+          ROWS: max0603HorzTwoTraceStaggered.rows,
+          ORIENTATION: "horizontal" as const,
+          PATTERN: "staggered" as const,
+          TRACE_CHANNELS_BETWEEN_JUMPERS: 2,
         },
       ],
     })
@@ -171,16 +308,81 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
   getCombinationDefs() {
     // Try all combinations of jumperType, cols, rows, and orientation
     return [
-      ["0603_max_rows_and_cols_vert"],
-      ["0603_max_rows_and_cols_horz"],
+      ["0603_max_rows_and_cols_vert_1trace_grid"],
+      ["0603_max_rows_and_cols_vert_1trace_staggered"],
+      ["0603_max_rows_and_cols_horz_1trace_grid"],
+      ["0603_max_rows_and_cols_horz_1trace_staggered"],
+      ["0603_max_rows_and_cols_vert_2trace_grid"],
+      ["0603_max_rows_and_cols_vert_2trace_staggered"],
+      ["0603_max_rows_and_cols_horz_2trace_grid"],
+      ["0603_max_rows_and_cols_horz_2trace_staggered"],
       ["1206x4", "1206x4_cols", "1206x4_rows", "orientation"],
     ]
   }
 
+  private calculateMax0603ConfigWithTraceChannels(
+    nodeWidth: number,
+    nodeHeight: number,
+    orientation: "horizontal" | "vertical",
+    traceChannelsBetweenJumpers: number,
+    pattern: "grid" | "staggered" = "grid",
+  ): { cols: number; rows: number } {
+    const padWidth = 0.9
+    const padHeight = 1.0
+    const padGap = 0.35
+    const paddingAroundPads = 0.5
+    const clearance =
+      this.traceWidth * traceChannelsBetweenJumpers + this.obstacleMargin * 2
+
+    const bodyWidth =
+      orientation === "horizontal" ? padWidth * 2 + padGap : padHeight
+    const bodyHeight =
+      orientation === "horizontal" ? padHeight : padWidth * 2 + padGap
+    const staggerAxis: "x" | "y" = orientation === "horizontal" ? "x" : "y"
+    const staggerOffset =
+      pattern === "staggered" && staggerAxis === "x"
+        ? bodyWidth / 2
+        : pattern === "staggered"
+          ? bodyHeight / 2
+          : 0
+
+    const availableWidth = Math.max(0, nodeWidth - paddingAroundPads * 2)
+    const availableHeight = Math.max(0, nodeHeight - paddingAroundPads * 2)
+    const effectiveAvailableWidth = Math.max(
+      0,
+      availableWidth -
+        (pattern === "staggered" && staggerAxis === "x" ? staggerOffset : 0),
+    )
+    const effectiveAvailableHeight = Math.max(
+      0,
+      availableHeight -
+        (pattern === "staggered" && staggerAxis === "y" ? staggerOffset : 0),
+    )
+
+    const pitchX = bodyWidth + clearance
+    const pitchY = bodyHeight + clearance
+
+    const effectiveCols = Math.max(
+      1,
+      Math.floor(1 + (effectiveAvailableWidth - bodyWidth) / pitchX),
+    )
+    const effectiveRows = Math.max(
+      1,
+      Math.floor(1 + (effectiveAvailableHeight - bodyHeight) / pitchY),
+    )
+
+    if (orientation === "vertical") {
+      return { cols: effectiveCols, rows: effectiveRows }
+    }
+
+    return { cols: effectiveRows, rows: effectiveCols }
+  }
+
   /**
    * Override initializeSolvers to use getCombinationDefs for both 0603 and 1206x4.
-   * For 0603: uses pre-calculated max rows/cols per orientation (2 configs total)
-   * For 1206x4: uses full combination of cols, rows, and orientation
+   * For 0603: uses pre-calculated max rows/cols for each orientation, trace channel count,
+   * and pattern (grid/staggered).
+   * For 1206x4: uses full combination of cols, rows, and orientation.
    */
   initializeSolvers() {
     const hyperParameterDefs = this.getHyperParameterDefs()
@@ -190,9 +392,9 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
 
     for (const combinationDef of combinationDefs) {
       // Check if this combination applies to our available jumper types
-      const is0603Combo =
-        combinationDef.includes("0603_max_rows_and_cols_vert") ||
-        combinationDef.includes("0603_max_rows_and_cols_horz")
+      const is0603Combo = combinationDef.some((name) =>
+        name.startsWith("0603_max_rows_and_cols_"),
+      )
       const is1206x4Combo = combinationDef.includes("1206x4")
 
       if (is0603Combo && !this.availableJumperTypes.includes("0603")) continue
@@ -231,7 +433,11 @@ export class HyperJumperPrepatternSolver2 extends HyperParameterSupervisorSolver
         ROWS: hyperParameters.ROWS,
         ORIENTATION: hyperParameters.ORIENTATION,
         JUMPER_TYPE: hyperParameters.JUMPER_TYPE,
+        PATTERN: hyperParameters.PATTERN,
+        TRACE_CHANNELS_BETWEEN_JUMPERS:
+          hyperParameters.TRACE_CHANNELS_BETWEEN_JUMPERS,
       },
+      obstacleMargin: this.obstacleMargin,
     })
   }
 
