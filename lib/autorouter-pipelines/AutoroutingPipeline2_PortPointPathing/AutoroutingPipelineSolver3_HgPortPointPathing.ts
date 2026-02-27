@@ -4,8 +4,6 @@ import type { GraphicsObject, Line } from "graphics-debug"
 import { getGlobalInMemoryCache } from "lib/cache/setupGlobalCaches"
 import { CacheProvider } from "lib/cache/types"
 import { UniformPortDistributionSolver } from "lib/solvers/UniformPortDistributionSolver/UniformPortDistributionSolver"
-import { getDrcErrors } from "lib/testing/getDrcErrors"
-import { convertToCircuitJson } from "lib/testing/utils/convertToCircuitJson"
 import {
   HighDensityIntraNodeRoute,
   HighDensityRoute,
@@ -39,17 +37,19 @@ import { SingleLayerNodeMergerSolver } from "../../solvers/SingleLayerNodeMerger
 import { StrawSolver } from "../../solvers/StrawSolver/StrawSolver"
 import { TraceSimplificationSolver } from "../../solvers/TraceSimplificationSolver/TraceSimplificationSolver"
 import { TraceWidthSolver } from "../../solvers/TraceWidthSolver/TraceWidthSolver"
-import { getColorMap } from "../../solvers/colors"
-import type {
-  CapacityMeshEdge,
-  CapacityMeshNode,
+import { getDrcErrors } from "lib/testing/getDrcErrors"
+import { convertToCircuitJson } from "lib/testing/utils/convertToCircuitJson"
+import { MultiTargetNecessaryCrampedPortPointSolver } from "lib/solvers/NecessaryCrampedPortPointSolver/MultiTargetNecessaryCrampedPortPointSolver"
+import { getColorMap } from "lib/solvers/colors"
+import {
   SimpleRouteJson,
-  SimplifiedPcbTrace,
+  CapacityMeshNode,
+  CapacityMeshEdge,
   SimplifiedPcbTraces,
-  TraceId,
-} from "../../types"
-import { combineVisualizations } from "../../utils/combineVisualizations"
-import { calculateOptimalCapacityDepth } from "../../utils/getTunedTotalCapacity1"
+  SimplifiedPcbTrace,
+} from "lib/types"
+import { combineVisualizations } from "lib/utils/combineVisualizations"
+import { calculateOptimalCapacityDepth } from "lib/index"
 
 interface CapacityMeshSolverOptions {
   capacityDepth?: number
@@ -109,6 +109,7 @@ export class AutoroutingPipelineSolver3_HgPortPointPathing extends BaseSolver {
   multiSectionPortPointOptimizer?: MultiSectionPortPointOptimizer
   uniformPortDistributionSolver?: UniformPortDistributionSolver
   traceWidthSolver?: TraceWidthSolver
+  necessaryCrampedPortPointSolver?: MultiTargetNecessaryCrampedPortPointSolver
   viaDiameter: number
   minTraceWidth: number
   effort: number
@@ -222,6 +223,18 @@ export class AutoroutingPipelineSolver3_HgPortPointPathing extends BaseSolver {
           edges: cms.capacityEdges || [],
           traceWidth: cms.minTraceWidth,
           colorMap: cms.colorMap,
+          shouldReturnCrampedPortPoints: true,
+        },
+      ],
+    ),
+    definePipelineStep(
+      "necessaryCrampedPortPointSolver",
+      MultiTargetNecessaryCrampedPortPointSolver,
+      (cms) => [
+        {
+          capacityMeshNodes: cms.capacityNodes!,
+          sharedEdgeSegments: cms.availableSegmentPointSolver!.getOutput(),
+          simpleRouteJson: cms.srjWithPointPairs!,
         },
       ],
     ),
@@ -247,8 +260,8 @@ export class AutoroutingPipelineSolver3_HgPortPointPathing extends BaseSolver {
         )
 
         // Add port points from the available segment point solver
-        const segmentPointSolver = cms.availableSegmentPointSolver!
-        for (const segment of segmentPointSolver.sharedEdgeSegments) {
+        const segmentPointSolver = cms.necessaryCrampedPortPointSolver!
+        for (const segment of segmentPointSolver.getOutput()) {
           for (const segmentPortPoint of segment.portPoints) {
             const [nodeId1, nodeId2] = segmentPortPoint.nodeIds
             const inputPortPoint: InputPortPoint = {
@@ -511,6 +524,8 @@ export class AutoroutingPipelineSolver3_HgPortPointPathing extends BaseSolver {
     const highDensityViz = this.highDensityRouteSolver?.visualize()
     const highDensityStitchViz = this.highDensityStitchSolver?.visualize()
     const traceSimplificationViz = this.traceSimplificationSolver?.visualize()
+    const necessaryCrampedPortPointSolverViz =
+      this.necessaryCrampedPortPointSolver?.visualize()
     const problemOutline = this.srj.outline
     const problemLines: Line[] = []
 
@@ -580,6 +595,7 @@ export class AutoroutingPipelineSolver3_HgPortPointPathing extends BaseSolver {
       edgeViz,
       deadEndViz,
       availableSegmentPointViz,
+      necessaryCrampedPortPointSolverViz,
       portPointPathingViz,
       multiSectionOptViz,
       uniformPortDistributionViz,
