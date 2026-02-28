@@ -6,11 +6,9 @@ import {
   type ViaByNet,
   type ViaTile,
   ViaGraphSolver,
-  createViaGraphWithConnections,
-  generateDefaultViaTopologyGrid,
+  createConvexViaGraphFromXYConnections,
 } from "@tscircuit/hypergraph"
 import { ConnectivityMap } from "circuit-json-to-connectivity-map"
-import { getBoundsFromNodeWithPortPoints } from "lib/utils/getBoundsFromNodeWithPortPoints"
 import type {
   HighDensityIntraNodeRoute,
   NodeWithPortPoints,
@@ -79,15 +77,12 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
   }
 
   private _initializeGraph(): ViaGraphSolver | null {
-    const node = this.nodeWithPortPoints
-    const nodeBounds = getBoundsFromNodeWithPortPoints(node)
-
     // Build connections from port points
     const connectionMap = new Map<
       string,
       { points: PortPoint[]; rootConnectionName?: string }
     >()
-    for (const pp of node.portPoints) {
+    for (const pp of this.nodeWithPortPoints.portPoints) {
       const existing = connectionMap.get(pp.connectionName)
       if (existing) {
         existing.points.push(pp)
@@ -118,25 +113,16 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
     }
     if (inputConnections.length === 0) return null
 
-    const viaTopology = generateDefaultViaTopologyGrid({
-      bounds: nodeBounds,
-    })
-    const result = createViaGraphWithConnections(
-      {
-        regions: viaTopology.regions,
-        ports: viaTopology.ports,
-      },
-      inputConnections,
-    )
-    this.tiledViasByNet = viaTopology.viaTile.viasByNet ?? {}
+    const convexGraph = createConvexViaGraphFromXYConnections(inputConnections)
+    this.tiledViasByNet = convexGraph.viaTile.viasByNet ?? {}
 
     return new ViaGraphSolver({
       inputGraph: {
-        regions: result.regions,
-        ports: result.ports,
+        regions: convexGraph.regions,
+        ports: convexGraph.ports,
       },
-      inputConnections: result.connections,
-      viaTile: viaTopology.viaTile,
+      inputConnections: convexGraph.connections,
+      viaTile: convexGraph.viaTile,
     })
   }
 
