@@ -15,12 +15,14 @@ import { SingleTransitionIntraNodeSolver } from "../HighDensitySolver/SingleTran
 import { MultiHeadPolyLineIntraNodeSolver2 } from "../HighDensitySolver/MultiHeadPolyLineIntraNodeSolver/MultiHeadPolyLineIntraNodeSolver2_Optimized"
 import { MultiHeadPolyLineIntraNodeSolver3 } from "../HighDensitySolver/MultiHeadPolyLineIntraNodeSolver/MultiHeadPolyLineIntraNodeSolver3_ViaPossibilitiesSolverIntegration"
 import { HighDensitySolverA01 } from "@tscircuit/high-density-a01"
+import { FixedTopologyHighDensityIntraNodeSolver } from "../FixedTopologyHighDensityIntraNodeSolver"
 
 export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
   | IntraNodeRouteSolver
   | TwoCrossingRoutesHighDensitySolver
   | SingleTransitionCrossingRouteSolver
   | SingleTransitionIntraNodeSolver
+  | FixedTopologyHighDensityIntraNodeSolver
 > {
   override getSolverName(): string {
     return "HyperSingleIntraNodeSolver"
@@ -53,6 +55,7 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
       ["closedFormSingleTrace"],
       // ["closedFormTwoTrace"],
       ["highDensityA01"],
+      ["fixedTopologyHighDensityIntraNodeSolver"],
     ]
   }
 
@@ -183,6 +186,14 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
           },
         ],
       },
+      {
+        name: "fixedTopologyHighDensityIntraNodeSolver",
+        possibleValues: [
+          {
+            FIXED_TOPOLOGY_HIGH_DENSITY_INTRA_NODE_SOLVER: true,
+          },
+        ],
+      },
     ]
   }
 
@@ -247,6 +258,14 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
         connMap: this.connMap,
         hyperParameters: hyperParameters,
         viaDiameter: this.constructorParams.viaDiameter,
+      }) as any
+    }
+    if (hyperParameters.FIXED_TOPOLOGY_HIGH_DENSITY_INTRA_NODE_SOLVER) {
+      return new FixedTopologyHighDensityIntraNodeSolver({
+        nodeWithPortPoints: this.nodeWithPortPoints,
+        connMap: this.connMap,
+        colorMap: this.constructorParams.colorMap,
+        traceWidth: this.constructorParams.traceWidth,
       }) as any
     }
     return new CachedIntraNodeRouteSolver({
