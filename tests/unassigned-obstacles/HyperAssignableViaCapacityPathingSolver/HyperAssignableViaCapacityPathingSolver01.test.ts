@@ -7,7 +7,7 @@ import constructorInput from "../../../fixtures/unassigned-obstacles/AssignableV
   type: "json",
 }
 
-test.skip("HyperAssignableViaCapacityPathingSolver should solve DirectiveSubOptimal01 problem", async () => {
+test("HyperAssignableViaCapacityPathingSolver should solve DirectiveSubOptimal01 problem", async () => {
   // Create hyper solver with the test input
   const solver = new HyperAssignableViaCapacityPathingSolver(
     (constructorInput as any)[0],
