@@ -140,11 +140,6 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
     const convexGraph = createConvexViaGraphFromXYConnections(
       inputConnections,
       this.viaTile,
-      {
-        // Keep hypergraph's newer tile topology, but scale obstacle clearance
-        // up when autorouter trace widths are larger than the default baseline.
-        clearance: Math.max(0.1, this.traceWidth / 2),
-      },
     )
     this.tiledViasByNet = convexGraph.viaTile.viasByNet ?? {}
 
