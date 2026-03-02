@@ -265,6 +265,7 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
         nodeWithPortPoints: this.nodeWithPortPoints,
         connMap: this.connMap,
         colorMap: this.constructorParams.colorMap,
+        viaDiameter: this.constructorParams.viaDiameter,
         traceWidth: this.constructorParams.traceWidth,
       }) as any
     }
