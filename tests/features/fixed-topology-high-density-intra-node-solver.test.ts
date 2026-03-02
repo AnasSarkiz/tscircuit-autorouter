@@ -21,6 +21,14 @@ test("FixedTopologyHighDensityIntraNodeSolver test", () => {
 
   expect(solver.failed).toBe(false)
   expect(solver.solved).toBe(true)
+  expect(
+    solver.solvedRoutes.every((route) => route.viaDiameter <= 0.3 + 1e-6),
+  ).toBe(true)
+  expect(
+    solver
+      .getOutputVias()
+      .every((viaRegion) => viaRegion.diameter <= 0.3 + 1e-6),
+  ).toBe(true)
 
   const srj = createSrjFromNodeWithPortPoints(input03.nodeWithPortPoints as any)
 
