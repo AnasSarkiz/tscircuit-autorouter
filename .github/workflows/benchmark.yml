@@ -32,6 +32,10 @@ on:
         required: false
         default: false
         type: boolean
+      dataset_name:
+        description: 'Dataset to benchmark (optional: dataset01 or zdwiel)'
+        required: false
+        type: string
       ref:
         description: Git ref (branch, tag, or SHA) to benchmark
         required: false
@@ -83,6 +87,8 @@ jobs:
             let ref = context.sha
             let statusCommentId = ''
             let includeAssignable = false
+            let datasetName = ''
+            const allowedDatasets = new Set(['dataset01', 'zdwiel'])
 
             if (isComment) {
               const body = context.payload.comment.body.trim()
@@ -105,6 +111,11 @@ jobs:
                   includeAssignable = true
                   continue
                 }
+                if (token === '--dataset') {
+                  datasetName = tokens[i + 1] || datasetName
+                  i += 1
+                  continue
+                }
                 positional.push(token)
               }
 
@@ -121,6 +132,25 @@ jobs:
               }
               if (usesAllSolvers) {
                 solverName = ''
+              }
+
+              if (datasetName && !allowedDatasets.has(datasetName)) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: [
+                    '## ❌ Invalid Benchmark Command',
+                    '',
+                    `Unknown dataset \`${datasetName}\`.`,
+                    'Allowed values: `dataset01`, `zdwiel`.',
+                    '',
+                    'Example:',
+                    '`/benchmark AutoroutingPipelineSolver --dataset zdwiel`',
+                  ].join('\n'),
+                })
+                core.setFailed(`Unknown dataset: ${datasetName}`)
+                return
               }
 
               const pr = await github.rest.pulls.get({
@@ -153,6 +183,13 @@ jobs:
               effort = (inputs.effort || '').trim()
               concurrency = (inputs.concurrency || concurrency).trim()
               includeAssignable = inputs.include_assignable === true || inputs.include_assignable === 'true'
+              datasetName = (inputs.dataset_name || '').trim()
+              if (datasetName && !allowedDatasets.has(datasetName)) {
+                core.setFailed(
+                  `Unknown dataset "${datasetName}". Allowed values: dataset01, zdwiel`,
+                )
+                return
+              }
               ref = (inputs.ref || '').trim() || ref
             }
 
@@ -165,6 +202,7 @@ jobs:
             core.setOutput('effort', effort)
             core.setOutput('concurrency', concurrency)
             core.setOutput('include_assignable', includeAssignable ? 'true' : 'false')
+            core.setOutput('dataset_name', datasetName)
             core.setOutput('ref', ref)
             core.setOutput('status_comment_id', statusCommentId)
 
@@ -188,6 +226,7 @@ jobs:
           EFFORT: ${{ steps.parse.outputs.effort }}
           CONCURRENCY: ${{ steps.parse.outputs.concurrency }}
           INCLUDE_ASSIGNABLE: ${{ steps.parse.outputs.include_assignable }}
+          DATASET_NAME: ${{ steps.parse.outputs.dataset_name }}
           BENCHMARK_TASK_TIMEOUT_PER_EFFORT_MS: ${{ vars.BENCHMARK_TASK_TIMEOUT_PER_EFFORT_MS || vars.BENCHMARK_TASK_TIMEOUT_MS || '60000' }}
           BENCHMARK_HEARTBEAT_INTERVAL_MS: ${{ vars.BENCHMARK_HEARTBEAT_INTERVAL_MS || '30000' }}
           BENCHMARK_TERMINATE_TIMEOUT_MS: ${{ vars.BENCHMARK_TERMINATE_TIMEOUT_MS || '1000' }}
@@ -207,6 +246,9 @@ jobs:
           fi
           if [ -n "$EFFORT" ]; then
             CMD+=(--effort "$EFFORT")
+          fi
+          if [ -n "$DATASET_NAME" ]; then
+            CMD+=(--dataset "$DATASET_NAME")
           fi
           if [ "$INCLUDE_ASSIGNABLE" = "true" ]; then
             CMD+=(--include-assignable)
