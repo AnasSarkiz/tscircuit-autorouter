@@ -137,6 +137,18 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
   }
 
   _step() {
+    const nonTopLayerPortPoint = this.nodeWithPortPoints.portPoints.find(
+      (pp) => pp.z !== 0,
+    )
+    if (nonTopLayerPortPoint) {
+      this.error =
+        "FixedTopologyHighDensityIntraNodeSolver only supports top-layer (z=0) port points; found bottom-layer input."
+      this.failed = true
+      this.solved = false
+      this.activeSubSolver = null
+      return
+    }
+
     let activeSubSolver = this.activeSubSolver as ViaGraphSolver | null
     if (!activeSubSolver) {
       activeSubSolver = this._initializeGraph()
