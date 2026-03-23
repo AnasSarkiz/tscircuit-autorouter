@@ -147,8 +147,6 @@ export class FixedTopologyHighDensityIntraNodeSolver extends BaseSolver {
   }
 
   _step() {
-    if (this.failed) return
-
     let activeSubSolver = this.activeSubSolver as ViaGraphSolver | null
     if (!activeSubSolver) {
       activeSubSolver = this._initializeGraph()
