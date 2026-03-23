@@ -14,6 +14,10 @@ test("FixedTopologyHighDensityIntraNodeSolver fails when any port point is botto
     traceWidth: input01.traceWidth,
   })
 
+  expect(solver.failed).toBe(true)
+  expect(solver.solved).toBe(false)
+  expect(String(solver.error)).toContain("only supports top-layer (z=0)")
+
   solver.solve()
 
   expect(solver.failed).toBe(true)

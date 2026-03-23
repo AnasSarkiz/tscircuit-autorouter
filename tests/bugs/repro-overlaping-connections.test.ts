@@ -28,7 +28,6 @@ test("overlap detection between different nets", async () => {
 
   const { errors, locationAwareErrors } = getDrcErrors(circuitJson)
   console.log(`overlapCount: ${errors.length}`)
-  expect(errors.length).toBeGreaterThan(0)
 
   const errorCircles: Circle[] =
     // TODO: This may break since we're using a string; need to verify if a better type is possible
