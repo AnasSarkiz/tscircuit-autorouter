@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "start": "cosmos",
-    "build": "tsup ./lib/index.ts --minify terser --external @tscircuit/core --external circuit-to-svg --format esm --dts --sourcemap",
+    "build": "tsup ./lib/index.ts --minify terser --external @tscircuit/core --external circuit-to-svg --external @tscircuit/fixed-via-hypergraph-solver/lib/index --format esm --dts --sourcemap",
     "bench": "bun test tests/spatial-index-bench.test.ts",
     "format": "biome format --write .",
     "format:check": "biome format .",
@@ -28,6 +28,7 @@
     "@tscircuit/circuit-json-util": "^0.0.90",
     "@tscircuit/core": "^0.0.337",
     "@tscircuit/curvy-trace-solver": "^0.0.10",
+    "@tscircuit/fixed-via-hypergraph-solver": "github:tscircuit/fixed-via-hypergraph-solver#7bd62d7db34f18d5ed892a8fce36dea59bf95b55",
     "@tscircuit/hypergraph": "^0.0.71",
     "@tscircuit/dataset-srj05": "git+https://github.com/tscircuit/dataset-srj05.git#9a49c126a89c083dc4d2b72cd17184735f637762",
     "@tscircuit/jumper-topology-generator": "^0.0.4",
