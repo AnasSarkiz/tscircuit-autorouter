@@ -40,6 +40,7 @@ import { CacheDebugger } from "./CacheDebugger"
 import { SolveBreakpointDialog } from "./SolveBreakpointDialog"
 import { RELAXED_DRC_OPTIONS } from "./drcPresets"
 import { getDrcErrors } from "./getDrcErrors"
+import { getCurrentCircuitJson } from "./autorouting-pipeline-debugger/getCurrentCircuitJson"
 import { convertToCircuitJson } from "./utils/convertToCircuitJson"
 import { filterUnravelMultiSectionInput } from "./utils/filterUnravelMultiSectionInput"
 import { getHighDensityNodeDownloadData } from "./utils/getHighDensityNodeDownloadData"
@@ -770,33 +771,6 @@ export const AutoroutingPipelineDebugger = ({
   const handleRunDrcChecks = () => runDrcChecks("strict")
   const handleRunRelaxedDrcChecks = () => runDrcChecks("relaxed")
 
-  const getCurrentCircuitJson = () => {
-    const srjWithPointPairs =
-      solver.netToPointPairsSolver?.getNewSimpleRouteJson() ||
-      solver.srjWithPointPairs
-
-    if (!srjWithPointPairs) {
-      window.alert(
-        "No connection information available yet. Wait until point-pair generation completes.",
-      )
-      return null
-    }
-
-    const routes = solver.getOutputSimplifiedPcbTraces()
-    if (!routes) {
-      window.alert(
-        "No routed traces available yet. Run routing first, then try again.",
-      )
-      return null
-    }
-
-    return convertToCircuitJson(
-      srjWithPointPairs,
-      routes,
-      solver.srj.minTraceWidth,
-    )
-  }
-
   const handleTogglePcbSvg = () => {
     if (pcbSvgMarkup) {
       setPcbSvgMarkup(null)
@@ -811,7 +785,9 @@ export const AutoroutingPipelineDebugger = ({
     }
 
     try {
-      const circuitJson = getCurrentCircuitJson()
+      const circuitJson = getCurrentCircuitJson(solver, (message) =>
+        window.alert(message),
+      )
       if (!circuitJson) return
 
       const svg = convertCircuitJsonToPcbSvg(circuitJson)
@@ -1534,7 +1510,9 @@ export const AutoroutingPipelineDebugger = ({
         </button>
         <button
           onClick={() => {
-            const circuitJson = getCurrentCircuitJson()
+            const circuitJson = getCurrentCircuitJson(solver, (message) =>
+              window.alert(message),
+            )
             if (!circuitJson) return
             const blob = new Blob([JSON.stringify(circuitJson, null, 2)], {
               type: "application/json",
