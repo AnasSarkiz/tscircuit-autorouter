@@ -69,7 +69,7 @@
     "vite": "^6.0.11",
     "vite-tsconfig-paths": "^5.1.4",
     "zdwiel-dataset": "git+https://github.com/dwiel/tscircuit-benchmark.git#be36518b5bf51755dae92c230061ab3cf4e3e063",
-    "high-density-repair02": "https://codeload.github.com/AnasSarkiz/high-density-repair02/tar.gz/909b6a334d4d6cb003e818ccda25904f7ef74c23"
+    "high-density-repair02": "https://codeload.github.com/AnasSarkiz/high-density-repair02/tar.gz/025e0c61e689cec190b987bc514eb56bc3d33ee0"
   },
   "dependencies": {
     "@tscircuit/high-density-a01": "^0.0.25",
