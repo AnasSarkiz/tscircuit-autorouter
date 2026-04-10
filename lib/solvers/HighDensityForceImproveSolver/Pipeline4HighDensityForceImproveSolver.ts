@@ -69,6 +69,7 @@ type ForceImproveSampleEntry = {
 type ForceImproveScore = {
   clearanceConflictCount: number
   clearancePenalty: number
+  crowdingPenalty: number
   boundaryOverflowCount: number
   selfIntersectionCount: number
   viaCount: number
@@ -137,7 +138,7 @@ const MAX_NODE_MOVE_PER_STEP = 0.012
 const MIN_STEP_DECAY = 0.25
 export const FORCE_VECTOR_DISPLAY_MULTIPLIER = 5
 const DEFAULT_ASSIGNMENT_MARGIN = 0.2
-const DEFAULT_TOTAL_STEPS_PER_NODE = 40
+const DEFAULT_TOTAL_STEPS_PER_NODE = 60
 
 const ROUNDING_PRECISION = 1_000
 const POSITION_EPSILON = 1e-6
@@ -860,6 +861,7 @@ const scoreRoutes = (
 
   let clearanceConflictCount = 0
   let clearancePenalty = 0
+  let crowdingPenalty = 0
   let boundaryOverflowCount = 0
   let selfIntersectionCount = 0
   let viaCount = 0
@@ -881,6 +883,12 @@ const scoreRoutes = (
       const distance = Math.hypot(
         leftElement.node.x - rightElement.node.x,
         leftElement.node.y - rightElement.node.y,
+      )
+      crowdingPenalty += getClearanceForceMagnitude(
+        distance,
+        1,
+        REPULSION_TAIL_RATIO,
+        REPULSION_FALLOFF,
       )
       if (distance + POSITION_EPSILON < TARGET_CLEARANCE) {
         clearanceConflictCount += 1
@@ -914,6 +922,17 @@ const scoreRoutes = (
         segment.startNode,
         segment.endNode,
       )
+      crowdingPenalty += getClearanceForceMagnitude(
+        distance,
+        1,
+        REPULSION_TAIL_RATIO,
+        REPULSION_FALLOFF,
+        getElementIntersectionBoost(element),
+        targetClearance,
+        element.kind === "via"
+          ? VIA_SEGMENT_FALLOFF_DISTANCE
+          : POINT_SEGMENT_FALLOFF_DISTANCE,
+      )
       if (distance + POSITION_EPSILON < targetClearance) {
         clearanceConflictCount += 1
         clearancePenalty += targetClearance - distance
@@ -941,6 +960,7 @@ const scoreRoutes = (
   return {
     clearanceConflictCount,
     clearancePenalty,
+    crowdingPenalty,
     boundaryOverflowCount,
     selfIntersectionCount,
     viaCount,
@@ -974,12 +994,58 @@ const areEndpointsStable = (
     )
   })
 
+const areRoutesMeaningfullyDifferent = (
+  beforeRoutes: HighDensityRoute[],
+  afterRoutes: HighDensityRoute[],
+) =>
+  beforeRoutes.some((beforeRoute, routeIndex) => {
+    const afterRoute = afterRoutes[routeIndex]
+    if (!afterRoute) return true
+    if (beforeRoute.route.length !== afterRoute.route.length) return true
+    if (beforeRoute.vias.length !== afterRoute.vias.length) return true
+
+    for (
+      let pointIndex = 0;
+      pointIndex < beforeRoute.route.length;
+      pointIndex += 1
+    ) {
+      const beforePoint = beforeRoute.route[pointIndex]
+      const afterPoint = afterRoute.route[pointIndex]
+      if (!beforePoint || !afterPoint) return true
+      if (
+        Math.abs(beforePoint.x - afterPoint.x) > 1e-4 ||
+        Math.abs(beforePoint.y - afterPoint.y) > 1e-4 ||
+        beforePoint.z !== afterPoint.z
+      ) {
+        return true
+      }
+    }
+
+    for (let viaIndex = 0; viaIndex < beforeRoute.vias.length; viaIndex += 1) {
+      const beforeVia = beforeRoute.vias[viaIndex]
+      const afterVia = afterRoute.vias[viaIndex]
+      if (!beforeVia || !afterVia) return true
+      if (
+        Math.abs(beforeVia.x - afterVia.x) > 1e-4 ||
+        Math.abs(beforeVia.y - afterVia.y) > 1e-4
+      ) {
+        return true
+      }
+    }
+
+    return false
+  })
+
 const shouldAcceptCandidate = (
   inputRoutes: HighDensityRoute[],
   candidateRoutes: HighDensityRoute[],
   bounds: Bounds,
 ) => {
   if (!areEndpointsStable(inputRoutes, candidateRoutes)) {
+    return false
+  }
+
+  if (!areRoutesMeaningfullyDifferent(inputRoutes, candidateRoutes)) {
     return false
   }
 
@@ -998,7 +1064,18 @@ const shouldAcceptCandidate = (
     candidateScore.clearanceConflictCount < inputScore.clearanceConflictCount ||
     candidateScore.clearancePenalty + 1e-6 < inputScore.clearancePenalty
 
-  if (!hasPrimaryImprovement) {
+  const keepsHardConflictsFlatOrBetter =
+    candidateScore.clearanceConflictCount <=
+      inputScore.clearanceConflictCount &&
+    candidateScore.clearancePenalty <= inputScore.clearancePenalty + 1e-6
+
+  const hasCrowdingImprovement =
+    candidateScore.crowdingPenalty <= inputScore.crowdingPenalty * 0.92
+
+  if (
+    !hasPrimaryImprovement &&
+    !(keepsHardConflictsFlatOrBetter && hasCrowdingImprovement)
+  ) {
     return false
   }
 
@@ -1723,24 +1800,49 @@ export class Pipeline4HighDensityForceImproveSolver extends BaseSolver {
       this.totalStepsPerNode,
       { includeForceVectors: false },
     )
-    const accepted = shouldAcceptCandidate(
+    let selectedResult = candidateResult
+    let accepted = shouldAcceptCandidate(
       inputRoutes,
       candidateResult.routes,
       bounds,
     )
 
+    if (!accepted) {
+      const routeComplexity = inputRoutes.reduce(
+        (sum, route) => sum + route.route.length + route.vias.length * 2,
+        0,
+      )
+      const retrySteps = Math.min(
+        this.totalStepsPerNode + Math.max(20, Math.round(routeComplexity / 6)),
+        this.totalStepsPerNode * 2,
+      )
+
+      if (retrySteps > this.totalStepsPerNode) {
+        const retryResult = runForceDirectedImprovement(
+          bounds,
+          inputRoutes,
+          retrySteps,
+          { includeForceVectors: false },
+        )
+        if (shouldAcceptCandidate(inputRoutes, retryResult.routes, bounds)) {
+          selectedResult = retryResult
+          accepted = true
+        }
+      }
+    }
+
     if (accepted) {
       for (let i = 0; i < sampleEntry.routeIndexes.length; i++) {
         this.improvedRoutesByIndex.set(
           sampleEntry.routeIndexes[i],
-          candidateResult.routes[i],
+          selectedResult.routes[i],
         )
       }
     }
 
     this.latestVisualization = createForceImproveVisualization({
       node: sampleEntry.node,
-      routes: accepted ? candidateResult.routes : inputRoutes,
+      routes: accepted ? selectedResult.routes : inputRoutes,
       colorMap: this.colorMap,
     })
 
@@ -1761,7 +1863,7 @@ export class Pipeline4HighDensityForceImproveSolver extends BaseSolver {
         attemptedNodeCount > 0
           ? ((attemptedNodeCount - 1) * (this.stats.averageStepsUsed ?? 0)) /
               attemptedNodeCount +
-            candidateResult.stepsCompleted / attemptedNodeCount
+            selectedResult.stepsCompleted / attemptedNodeCount
           : 0,
     }
 

@@ -95,6 +95,7 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
   highDensityRouteSolver?: HighDensitySolver
   highDensityForceImproveSolver?: Pipeline4HighDensityForceImproveSolver
   highDensityRepairSolver?: Pipeline4HighDensityRepairSolver
+  highDensityPostRepairForceImproveSolver?: Pipeline4HighDensityForceImproveSolver
   highDensityStitchSolver?: MultipleHighDensityRouteStitchSolver3
   singleLayerNodeMerger?: SingleLayerNodeMergerSolver
   strawSolver?: StrawSolver
@@ -298,7 +299,7 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
           nodeWithPortPoints: cms.highDensityNodePortPoints ?? [],
           hdRoutes: cms.highDensityRouteSolver!.routes,
           colorMap: cms.colorMap,
-          totalStepsPerNode: Math.max(16, Math.round(40 * cms.effort)),
+          totalStepsPerNode: Math.max(24, Math.round(60 * cms.effort)),
           nodeAssignmentMargin: cms.srj.defaultObstacleMargin ?? 0.2,
         },
       ],
@@ -319,12 +320,29 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
       ],
     ),
     definePipelineStep(
+      "highDensityPostRepairForceImproveSolver",
+      Pipeline4HighDensityForceImproveSolver,
+      (cms) => [
+        {
+          nodeWithPortPoints: cms.highDensityNodePortPoints ?? [],
+          hdRoutes:
+            cms.highDensityRepairSolver?.getOutput() ??
+            cms.highDensityForceImproveSolver?.getOutput() ??
+            cms.highDensityRouteSolver!.routes,
+          colorMap: cms.colorMap,
+          totalStepsPerNode: Math.max(16, Math.round(36 * cms.effort)),
+          nodeAssignmentMargin: cms.srj.defaultObstacleMargin ?? 0.2,
+        },
+      ],
+    ),
+    definePipelineStep(
       "highDensityStitchSolver",
       MultipleHighDensityRouteStitchSolver3,
       (cms) => [
         {
           connections: cms.srjWithPointPairs!.connections,
           hdRoutes:
+            cms.highDensityPostRepairForceImproveSolver?.getOutput() ??
             cms.highDensityRepairSolver?.getOutput() ??
             cms.highDensityForceImproveSolver?.getOutput() ??
             cms.highDensityRouteSolver!.routes,
@@ -472,6 +490,8 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
     const highDensityForceImproveViz =
       this.highDensityForceImproveSolver?.visualize()
     const highDensityRepairViz = this.highDensityRepairSolver?.visualize()
+    const highDensityPostRepairForceImproveViz =
+      this.highDensityPostRepairForceImproveSolver?.visualize()
     const highDensityStitchViz = this.highDensityStitchSolver?.visualize()
     const traceSimplificationViz = this.traceSimplificationSolver?.visualize()
     const necessaryCrampedPortPointSolverViz =
@@ -547,6 +567,7 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
       highDensityViz ? combineVisualizations(problemViz, highDensityViz) : null,
       highDensityForceImproveViz,
       highDensityRepairViz,
+      highDensityPostRepairForceImproveViz,
       highDensityStitchViz,
       traceSimplificationViz,
       this.solved
