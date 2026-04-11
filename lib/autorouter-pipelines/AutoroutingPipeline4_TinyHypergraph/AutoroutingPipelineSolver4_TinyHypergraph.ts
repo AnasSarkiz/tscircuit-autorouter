@@ -12,6 +12,7 @@ import { getColorMap } from "lib/solvers/colors"
 import {
   CapacityMeshEdge,
   CapacityMeshNode,
+  SimpleRouteConnection,
   SimpleRouteJson,
   SimplifiedPcbTrace,
   SimplifiedPcbTraces,
@@ -31,6 +32,7 @@ import { CapacityMeshEdgeSolver } from "../../solvers/CapacityMeshSolver/Capacit
 import { CapacityMeshEdgeSolver2_NodeTreeOptimization } from "../../solvers/CapacityMeshSolver/CapacityMeshEdgeSolver2_NodeTreeOptimization"
 import { CapacityNodeTargetMerger } from "../../solvers/CapacityNodeTargetMerger/CapacityNodeTargetMerger"
 import { DeadEndSolver } from "../../solvers/DeadEndSolver/DeadEndSolver"
+import { EscapeViaLocationSolver } from "../../solvers/EscapeViaLocationSolver/EscapeViaLocationSolver"
 import { Pipeline4HighDensityRepairSolver } from "../../solvers/HighDensityRepairSolver/Pipeline4HighDensityRepairSolver"
 import { HighDensitySolver } from "../../solvers/HighDensitySolver/HighDensitySolver"
 import { MultiSectionPortPointOptimizer } from "../../solvers/MultiSectionPortPointOptimizer"
@@ -85,6 +87,7 @@ function definePipelineStep<
 }
 
 export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
+  escapeViaLocationSolver?: EscapeViaLocationSolver
   netToPointPairsSolver?: NetToPointPairsSolver
   nodeSolver?: RectDiffPipeline
   nodeDimensionSubdivisionSolver?: NodeDimensionSubdivisionSolver
@@ -116,6 +119,7 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
 
   activeSubSolver?: BaseSolver | null = null
   connMap: ConnectivityMap
+  srjWithEscapeViaLocations?: SimpleRouteJson
   srjWithPointPairs?: SimpleRouteJson
   capacityNodes: CapacityMeshNode[] | null = null
   capacityEdges: CapacityMeshEdge[] | null = null
@@ -124,9 +128,27 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
   cacheProvider: CacheProvider | null = null
   pipelineDef = [
     definePipelineStep(
+      "escapeViaLocationSolver",
+      EscapeViaLocationSolver,
+      (cms) => [
+        cms.srj,
+        {
+          viaDiameter: cms.viaDiameter,
+          minTraceWidth: cms.minTraceWidth,
+          obstacleMargin: cms.srj.defaultObstacleMargin ?? 0.15,
+        },
+      ],
+      {
+        onSolved: (cms) => {
+          cms.srjWithEscapeViaLocations =
+            cms.escapeViaLocationSolver?.getOutputSimpleRouteJson()
+        },
+      },
+    ),
+    definePipelineStep(
       "netToPointPairsSolver",
       NetToPointPairsSolver2_OffBoardConnection,
-      (cms) => [cms.srj, cms.colorMap],
+      (cms) => [cms.srjWithEscapeViaLocations ?? cms.srj, cms.colorMap],
       {
         onSolved: (cms) => {
           cms.srjWithPointPairs =
@@ -436,6 +458,7 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
     if (!this.solved && this.activeSubSolver) {
       return this.activeSubSolver.visualize()
     }
+    const escapeViaLocationViz = this.escapeViaLocationSolver?.visualize()
     const netToPPSolver = this.netToPointPairsSolver?.visualize()
     const nodeViz = this.nodeSolver?.visualize()
     const nodeSubdivisionViz = this.nodeDimensionSubdivisionSolver?.visualize()
@@ -497,20 +520,23 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
         ),
       ],
       rects: [
-        ...(this.srj.obstacles ?? []).map((o) => ({
-          ...o,
-          fill: o.layers?.includes("top")
-            ? "rgba(255,0,0,0.25)"
-            : o.layers?.includes("bottom")
-              ? "rgba(0,0,255,0.25)"
-              : "rgba(255,0,0,0.25)",
-          label: o.layers?.join(", "),
-        })),
+        ...(this.srj.obstacles ?? [])
+          .filter((o) => !o.isCopperPour)
+          .map((o) => ({
+            ...o,
+            fill: o.layers?.includes("top")
+              ? "rgba(255,0,0,0.25)"
+              : o.layers?.includes("bottom")
+                ? "rgba(0,0,255,0.25)"
+                : "rgba(255,0,0,0.25)",
+            label: o.layers?.join(", "),
+          })),
       ],
       lines: problemLines,
     } as GraphicsObject
     const visualizations = [
       problemViz,
+      escapeViaLocationViz,
       netToPPSolver,
       nodeViz,
       nodeSubdivisionViz,
@@ -557,6 +583,9 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
     if (this.netToPointPairsSolver) {
       return this.netToPointPairsSolver.visualize()
     }
+    if (this.escapeViaLocationSolver) {
+      return this.escapeViaLocationSolver.visualize()
+    }
 
     return {}
   }
@@ -596,7 +625,9 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
             netConnectionName ??
             connection.rootConnectionName ??
             connection.name,
-          route: convertHdRouteToSimplifiedRoute(hdRoute, this.srj.layerCount),
+          route: convertHdRouteToSimplifiedRoute(hdRoute, this.srj.layerCount, {
+            connectionPoints: connection.pointsToConnect,
+          }),
         }
 
         traces.push(simplifiedPcbTrace)
