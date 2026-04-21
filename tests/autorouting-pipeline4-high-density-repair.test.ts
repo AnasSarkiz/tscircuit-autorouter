@@ -1,13 +1,19 @@
 import { expect, test } from "bun:test"
 import * as dataset01 from "@tscircuit/autorouting-dataset-01"
 import { AutoroutingPipelineSolver4 } from "lib/autorouter-pipelines/AutoroutingPipeline4_TinyHypergraph/AutoroutingPipelineSolver4_TinyHypergraph"
+import { getDrcErrors } from "lib/testing/getDrcErrors"
+import { convertToCircuitJson } from "lib/testing/utils/convertToCircuitJson"
+import { convertHdRouteToSimplifiedRoute } from "lib/utils/convertHdRouteToSimplifiedRoute"
 import { Pipeline4HighDensityRepairSolver } from "lib/solvers/HighDensityRepairSolver/Pipeline4HighDensityRepairSolver"
+import {
+  DEFAULT_VIA_CLEARANCE_POLICY,
+  HighDensityForceImproveSolver,
+} from "lib/solvers/HighDensityForceImproveSolver/HighDensityForceImproveSolver"
 import type {
   HighDensityRoute,
   NodeWithPortPoints,
 } from "lib/types/high-density-types"
 import type { SimpleRouteJson } from "lib/types"
-import { HighDensityForceImproveSolver } from "high-density-repair01/lib/HighDensityForceImproveSolver"
 
 const srj: SimpleRouteJson = {
   layerCount: 2,
@@ -63,6 +69,54 @@ const hdRoute: HighDensityRoute = {
   vias: [],
 }
 
+const countStrictViaErrors = (
+  solver: AutoroutingPipelineSolver4,
+  srjInput: SimpleRouteJson,
+  hdRoutes: HighDensityRoute[],
+) => {
+  const traces = []
+
+  for (const connection of solver.netToPointPairsSolver?.newConnections ?? []) {
+    const netConnectionName =
+      connection.netConnectionName ??
+      srjInput.connections.find((c) => c.name === connection.name)
+        ?.netConnectionName
+    const connRoutes = hdRoutes.filter(
+      (r) => r.connectionName === connection.name,
+    )
+
+    for (let i = 0; i < connRoutes.length; i++) {
+      traces.push({
+        type: "pcb_trace",
+        pcb_trace_id: `${connection.name}_${i}`,
+        connection_name:
+          netConnectionName ?? connection.rootConnectionName ?? connection.name,
+        route: convertHdRouteToSimplifiedRoute(
+          connRoutes[i],
+          srjInput.layerCount,
+          {
+            connectionPoints: connection.pointsToConnect,
+          },
+        ),
+      })
+    }
+  }
+
+  const circuitJson = convertToCircuitJson(
+    solver.srjWithPointPairs ?? srjInput,
+    traces,
+    srjInput.minTraceWidth,
+    srjInput.minViaDiameter,
+  )
+
+  const strict = getDrcErrors(circuitJson as any)
+  return strict.errors.filter((error) =>
+    String((error as any).pcb_error_id ?? "").startsWith(
+      "different_net_vias_close_",
+    ),
+  ).length
+}
+
 test("Pipeline4HighDensityRepairSolver preserves simple no-op routes", () => {
   const solver = new Pipeline4HighDensityRepairSolver({
     nodeWithPortPoints: [nodeWithPortPoints],
@@ -106,6 +160,7 @@ test("pipeline4 inserts force-improve stage after high density and before repair
   expect(phaseNames.indexOf("highDensityStitchSolver")).toBe(
     phaseNames.indexOf("highDensityRepairSolver") + 1,
   )
+  expect(solver.viaClearancePolicy).toEqual(DEFAULT_VIA_CLEARANCE_POLICY)
 })
 
 test("pipeline4 repair stage consumes force-improved routes", () => {
@@ -263,4 +318,75 @@ test(
     expect(changedRouteCount).toBeGreaterThan(0)
   },
   { timeout: 60000 },
+)
+
+test(
+  "pipeline4 dataset01 circuit210 strict via DRC is clean in final output",
+  () => {
+    const circuit210 = (dataset01 as Record<string, unknown>)
+      .circuit210 as SimpleRouteJson
+    const solver = new AutoroutingPipelineSolver4(structuredClone(circuit210))
+
+    solver.solve()
+
+    expect(solver.solved).toBe(true)
+    expect(solver.failed).toBe(false)
+
+    const strictFinalViaErrors = countStrictViaErrors(
+      solver,
+      circuit210,
+      solver._getOutputHdRoutes(),
+    )
+    const relaxedFinalErrors = getDrcErrors(
+      convertToCircuitJson(
+        solver.srjWithPointPairs ?? circuit210,
+        solver.getOutputSimplifiedPcbTraces(),
+        circuit210.minTraceWidth,
+        circuit210.minViaDiameter,
+      ) as any,
+      { traceClearance: 0.1, viaClearance: 0.1 },
+    ).errors.length
+
+    expect(strictFinalViaErrors).toBe(0)
+    expect(relaxedFinalErrors).toBe(0)
+  },
+  { timeout: 120000 },
+)
+
+test(
+  "pipeline4 dataset01 circuit210 strict via trend does not regress at force-improve/repair",
+  () => {
+    const circuit210 = (dataset01 as Record<string, unknown>)
+      .circuit210 as SimpleRouteJson
+    const solver = new AutoroutingPipelineSolver4(structuredClone(circuit210))
+
+    solver.solve()
+
+    const routeStageViaErrors = countStrictViaErrors(
+      solver,
+      circuit210,
+      solver.highDensityRouteSolver?.routes ?? [],
+    )
+    const forceStageViaErrors = countStrictViaErrors(
+      solver,
+      circuit210,
+      solver.highDensityForceImproveSolver?.getOutput() ?? [],
+    )
+    const repairStageViaErrors = countStrictViaErrors(
+      solver,
+      circuit210,
+      solver.highDensityRepairSolver?.getOutput() ?? [],
+    )
+    const finalViaErrors = countStrictViaErrors(
+      solver,
+      circuit210,
+      solver._getOutputHdRoutes(),
+    )
+
+    expect(finalViaErrors).toBeLessThanOrEqual(routeStageViaErrors)
+    expect(finalViaErrors).toBeLessThanOrEqual(forceStageViaErrors)
+    expect(finalViaErrors).toBeLessThanOrEqual(repairStageViaErrors)
+    expect(finalViaErrors).toBe(0)
+  },
+  { timeout: 120000 },
 )

@@ -37,7 +37,11 @@ import { CapacityMeshEdgeSolver } from "../../solvers/CapacityMeshSolver/Capacit
 import { CapacityMeshEdgeSolver2_NodeTreeOptimization } from "../../solvers/CapacityMeshSolver/CapacityMeshEdgeSolver2_NodeTreeOptimization"
 import { CapacityNodeTargetMerger } from "../../solvers/CapacityNodeTargetMerger/CapacityNodeTargetMerger"
 import { DeadEndSolver } from "../../solvers/DeadEndSolver/DeadEndSolver"
-import { HighDensityForceImproveSolver } from "high-density-repair01/lib/HighDensityForceImproveSolver"
+import {
+  DEFAULT_VIA_CLEARANCE_POLICY,
+  HighDensityForceImproveSolver,
+  type ViaClearancePolicy,
+} from "../../solvers/HighDensityForceImproveSolver/HighDensityForceImproveSolver"
 import { EscapeViaLocationSolver } from "../../solvers/EscapeViaLocationSolver/EscapeViaLocationSolver"
 import { Pipeline4HighDensityRepairSolver } from "../../solvers/HighDensityRepairSolver/Pipeline4HighDensityRepairSolver"
 import { HighDensitySolver } from "../../solvers/HighDensitySolver/HighDensitySolver"
@@ -58,8 +62,142 @@ interface CapacityMeshSolverOptions {
   maxNodeDimension?: number
   maxNodeRatio?: number
   minNodeArea?: number
+  viaClearancePolicy?: Partial<ViaClearancePolicy>
 }
 export type AutoroutingPipelineSolverOptions = CapacityMeshSolverOptions
+
+type MutableViaRef = {
+  routeIndex: number
+  viaIndex: number
+  x: number
+  y: number
+  radius: number
+  rootConnectionName: string
+}
+
+const POSITION_EPSILON = 1e-6
+const CLEARANCE_EPSILON = 1e-4
+
+const deepCloneHdRoutes = (routes: HighDensityRoute[]): HighDensityRoute[] =>
+  routes.map((route) => ({
+    ...route,
+    route: route.route.map((point) => ({ ...point })),
+    vias: route.vias.map((via) => ({ ...via })),
+    jumpers: route.jumpers,
+  }))
+
+const collectViaRefs = (routes: HighDensityRoute[]): MutableViaRef[] =>
+  routes.flatMap((route, routeIndex) =>
+    route.vias.map((via, viaIndex) => ({
+      routeIndex,
+      viaIndex,
+      x: via.x,
+      y: via.y,
+      radius: route.viaDiameter / 2,
+      rootConnectionName: route.rootConnectionName ?? route.connectionName,
+    })),
+  )
+
+const moveViaAndRoutePoints = (
+  route: HighDensityRoute,
+  viaIndex: number,
+  dx: number,
+  dy: number,
+) => {
+  const via = route.vias[viaIndex]
+  if (!via) return
+  const oldX = via.x
+  const oldY = via.y
+  via.x += dx
+  via.y += dy
+
+  for (const point of route.route) {
+    if (
+      Math.abs(point.x - oldX) <= POSITION_EPSILON &&
+      Math.abs(point.y - oldY) <= POSITION_EPSILON
+    ) {
+      point.x += dx
+      point.y += dy
+    }
+  }
+}
+
+const enforceDifferentNetViaClearance = (
+  routesInput: HighDensityRoute[],
+  minClearance: number,
+  bounds?: SimpleRouteJson["bounds"],
+) => {
+  const routes = deepCloneHdRoutes(routesInput)
+  const maxIterations = 120
+  const maxMovePerVia = 0.04
+
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    const vias = collectViaRefs(routes)
+    let movedAny = false
+
+    for (let i = 0; i < vias.length; i += 1) {
+      const left = vias[i]
+      for (let j = i + 1; j < vias.length; j += 1) {
+        const right = vias[j]
+        if (left.rootConnectionName === right.rootConnectionName) continue
+
+        const dx = right.x - left.x
+        const dy = right.y - left.y
+        const centerDistance = Math.hypot(dx, dy)
+        const gap = centerDistance - left.radius - right.radius
+        const requiredGap = minClearance
+        const penetration = requiredGap - gap
+        if (penetration <= 0) continue
+
+        let dirX = 0
+        let dirY = 0
+        if (centerDistance > POSITION_EPSILON) {
+          dirX = dx / centerDistance
+          dirY = dy / centerDistance
+        } else {
+          const seed = (i + 1) * 97 + (j + 1) * 13
+          const angle = seed * 1.61803398875
+          dirX = Math.cos(angle)
+          dirY = Math.sin(angle)
+        }
+
+        const rawMove = (penetration + CLEARANCE_EPSILON) / 2
+        const moveMagnitude = Math.min(maxMovePerVia, Math.max(rawMove, 0))
+        if (moveMagnitude <= 0) continue
+        const moveX = dirX * moveMagnitude
+        const moveY = dirY * moveMagnitude
+
+        const leftRoute = routes[left.routeIndex]
+        const rightRoute = routes[right.routeIndex]
+        if (!leftRoute || !rightRoute) continue
+
+        moveViaAndRoutePoints(leftRoute, left.viaIndex, -moveX, -moveY)
+        moveViaAndRoutePoints(rightRoute, right.viaIndex, moveX, moveY)
+
+        if (bounds) {
+          const clampRoutePoints = (route: HighDensityRoute) => {
+            for (const point of route.route) {
+              point.x = Math.max(bounds.minX, Math.min(bounds.maxX, point.x))
+              point.y = Math.max(bounds.minY, Math.min(bounds.maxY, point.y))
+            }
+            for (const via of route.vias) {
+              via.x = Math.max(bounds.minX, Math.min(bounds.maxX, via.x))
+              via.y = Math.max(bounds.minY, Math.min(bounds.maxY, via.y))
+            }
+          }
+          clampRoutePoints(leftRoute)
+          clampRoutePoints(rightRoute)
+        }
+
+        movedAny = true
+      }
+    }
+
+    if (!movedAny) break
+  }
+
+  return routes
+}
 
 type PipelineStep<T extends new (...args: any[]) => BaseSolver> = {
   solverName: string
@@ -121,6 +259,7 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
   maxNodeDimension: number
   maxNodeRatio: number
   minNodeArea: number
+  viaClearancePolicy: ViaClearancePolicy
 
   startTimeOfPhase: Record<string, number>
   endTimeOfPhase: Record<string, number>
@@ -335,6 +474,7 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
           colorMap: cms.colorMap,
           totalStepsPerNode: Math.max(20, Math.round(60 * cms.effort)),
           nodeAssignmentMargin: cms.srj.defaultObstacleMargin ?? 0.2,
+          viaClearancePolicy: cms.viaClearancePolicy,
         },
       ],
     ),
@@ -349,7 +489,7 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
             cms.highDensityRouteSolver!.routes,
           obstacles: cms.srj.obstacles,
           colorMap: cms.colorMap,
-          repairMargin: cms.srj.defaultObstacleMargin ?? 0.2,
+          repairMargin: cms.viaClearancePolicy.differentNetViaClearance,
         },
       ],
     ),
@@ -413,6 +553,10 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
     this.maxNodeDimension = mutableOpts.maxNodeDimension ?? 16
     this.maxNodeRatio = mutableOpts.maxNodeRatio ?? 6
     this.minNodeArea = mutableOpts.minNodeArea ?? 0.1 ** 2
+    this.viaClearancePolicy = {
+      ...DEFAULT_VIA_CLEARANCE_POLICY,
+      ...(mutableOpts.viaClearancePolicy ?? {}),
+    }
 
     if (mutableOpts.capacityDepth === undefined) {
       const boundsWidth = srj.bounds.maxX - srj.bounds.minX
@@ -635,10 +779,15 @@ export class AutoroutingPipelineSolver4_TinyHypergraph extends BaseSolver {
   }
 
   _getOutputHdRoutes(): HighDensityRoute[] {
-    return (
+    const baseRoutes =
       this.traceWidthSolver?.getHdRoutesWithWidths() ??
       this.traceSimplificationSolver?.simplifiedHdRoutes ??
       this.highDensityStitchSolver!.mergedHdRoutes
+
+    return enforceDifferentNetViaClearance(
+      baseRoutes,
+      this.viaClearancePolicy.differentNetViaClearance,
+      this.srj.bounds,
     )
   }
 
