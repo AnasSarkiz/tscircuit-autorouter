@@ -67,6 +67,7 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
       // ["closedFormTwoTrace"],
       ["highDensityA01"],
       ["highDensityA03"],
+      ["mergedRootHighDensityA03"],
       ["fixedTopologyHighDensityIntraNodeSolver"],
     ]
   }
@@ -222,6 +223,15 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
           },
         ],
       },
+      {
+        name: "mergedRootHighDensityA03",
+        possibleValues: [
+          {
+            HIGH_DENSITY_A03: true,
+            MERGE_SAME_ROOT_CONNECTION_NAMES: true,
+          },
+        ],
+      },
     ]
   }
 
@@ -250,14 +260,35 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
   }
 
   generateSolver(hyperParameters: any): IntraNodeRouteSolver {
+    const shouldMergeSameRootConnectionNames =
+      hyperParameters.MERGE_SAME_ROOT_CONNECTION_NAMES === true
+    const hasSplitRootConnections = this.hasSplitRootConnections()
+    if (shouldMergeSameRootConnectionNames && !hasSplitRootConnections) {
+      const ineligibleSolver = new IntraNodeRouteSolver({
+        nodeWithPortPoints: this.nodeWithPortPoints,
+        connMap: this.connMap,
+        traceWidth: this.constructorParams.traceWidth,
+        viaDiameter: this.constructorParams.viaDiameter,
+        obstacleMargin: this.constructorParams.obstacleMargin,
+      })
+      ineligibleSolver.failed = true
+      ineligibleSolver.error =
+        "Merged-root solver not applicable (no split root connections)"
+      return ineligibleSolver as any
+    }
+
+    const nodeWithPortPoints = shouldMergeSameRootConnectionNames
+      ? this.getNodeWithMergedRootConnectionNames()
+      : this.nodeWithPortPoints
+
     if (hyperParameters.SINGLE_LAYER_NO_DIFFERENT_ROOT_INTERSECTIONS) {
       if (
         !SingleLayerNoDifferentRootIntersectionsIntraNodeSolver.isApplicable(
-          this.nodeWithPortPoints,
+          nodeWithPortPoints,
         )
       ) {
         const ineligibleSolver = new IntraNodeRouteSolver({
-          nodeWithPortPoints: this.nodeWithPortPoints,
+          nodeWithPortPoints,
           connMap: this.connMap,
           traceWidth: this.constructorParams.traceWidth,
           viaDiameter: this.constructorParams.viaDiameter,
@@ -270,7 +301,7 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
       }
 
       return new SingleLayerNoDifferentRootIntersectionsIntraNodeSolver({
-        nodeWithPortPoints: this.nodeWithPortPoints,
+        nodeWithPortPoints,
         traceWidth: this.constructorParams.traceWidth,
         viaDiameter: this.constructorParams.viaDiameter,
       }) as any
@@ -278,7 +309,7 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
 
     if (hyperParameters.HIGH_DENSITY_A01) {
       const solver = new HighDensitySolverA01({
-        nodeWithPortPoints: this.nodeWithPortPoints,
+        nodeWithPortPoints,
         cellSizeMm: 0.1,
         viaDiameter: this.constructorParams.viaDiameter ?? 0.3,
         viaMinDistFromBorder: 0.15,
@@ -293,7 +324,7 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
     }
     if (hyperParameters.HIGH_DENSITY_A03) {
       const solver = new HighDensityA03Solver({
-        nodeWithPortPoints: this.nodeWithPortPoints,
+        nodeWithPortPoints,
         highResolutionCellSize: 0.1,
         highResolutionCellThickness: 8,
         lowResolutionCellSize: 0.4,
@@ -312,25 +343,25 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
     }
     if (hyperParameters.CLOSED_FORM_TWO_TRACE_SAME_LAYER) {
       return new TwoCrossingRoutesHighDensitySolver({
-        nodeWithPortPoints: this.nodeWithPortPoints,
+        nodeWithPortPoints,
         viaDiameter: this.constructorParams.viaDiameter,
       }) as any
     }
     if (hyperParameters.CLOSED_FORM_TWO_TRACE_TRANSITION_CROSSING) {
       return new SingleTransitionCrossingRouteSolver({
-        nodeWithPortPoints: this.nodeWithPortPoints,
+        nodeWithPortPoints,
         viaDiameter: this.constructorParams.viaDiameter,
       }) as any
     }
     if (hyperParameters.CLOSED_FORM_SINGLE_TRANSITION) {
       return new SingleTransitionIntraNodeSolver({
-        nodeWithPortPoints: this.nodeWithPortPoints,
+        nodeWithPortPoints,
         viaDiameter: this.constructorParams.viaDiameter,
       }) as any
     }
     if (hyperParameters.MULTI_HEAD_POLYLINE_SOLVER) {
       return new MultiHeadPolyLineIntraNodeSolver3({
-        nodeWithPortPoints: this.nodeWithPortPoints,
+        nodeWithPortPoints,
         connMap: this.connMap,
         hyperParameters: hyperParameters,
         viaDiameter: this.constructorParams.viaDiameter,
@@ -338,7 +369,7 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
     }
     if (hyperParameters.FIXED_TOPOLOGY_HIGH_DENSITY_INTRA_NODE_SOLVER) {
       return new FixedTopologyHighDensityIntraNodeSolver({
-        nodeWithPortPoints: this.nodeWithPortPoints,
+        nodeWithPortPoints,
         connMap: this.connMap,
         colorMap: this.constructorParams.colorMap,
         traceWidth: this.constructorParams.traceWidth,
@@ -347,8 +378,36 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
     }
     return new CachedIntraNodeRouteSolver({
       ...this.constructorParams,
+      nodeWithPortPoints,
       hyperParameters,
     })
+  }
+
+  private hasSplitRootConnections() {
+    const connectionNamesByRoot = new Map<string, Set<string>>()
+    for (const portPoint of this.nodeWithPortPoints.portPoints) {
+      const rootConnectionName =
+        portPoint.rootConnectionName ?? portPoint.connectionName
+      if (!connectionNamesByRoot.has(rootConnectionName)) {
+        connectionNamesByRoot.set(rootConnectionName, new Set())
+      }
+      connectionNamesByRoot
+        .get(rootConnectionName)!
+        .add(portPoint.connectionName)
+    }
+    return Array.from(connectionNamesByRoot.values()).some(
+      (connectionNames) => connectionNames.size > 1,
+    )
+  }
+
+  private getNodeWithMergedRootConnectionNames(): NodeWithPortPoints {
+    return {
+      ...this.nodeWithPortPoints,
+      portPoints: this.nodeWithPortPoints.portPoints.map((portPoint) => ({
+        ...portPoint,
+        connectionName: portPoint.rootConnectionName ?? portPoint.connectionName,
+      })),
+    }
   }
 
   onSolve(solver: SupervisedSolver<IntraNodeRouteSolver>) {
@@ -362,15 +421,29 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
       routes = solver.solver.solvedRoutes
     }
     this.solvedRoutes = routes.map((route) => {
-      const matchingPortPoint = this.nodeWithPortPoints.portPoints.find(
+      const directConnectionMatch = this.nodeWithPortPoints.portPoints.find(
         (p) => p.connectionName === route.connectionName,
       )
-      if (matchingPortPoint?.rootConnectionName) {
+      if (directConnectionMatch?.rootConnectionName) {
         return {
           ...route,
-          rootConnectionName: matchingPortPoint.rootConnectionName,
+          rootConnectionName: directConnectionMatch.rootConnectionName,
         }
       }
+
+      const rootConnectionMatch = this.nodeWithPortPoints.portPoints.find(
+        (p) =>
+          (p.rootConnectionName ?? p.connectionName) === route.connectionName,
+      )
+      if (rootConnectionMatch) {
+        return {
+          ...route,
+          connectionName: rootConnectionMatch.connectionName,
+          rootConnectionName:
+            rootConnectionMatch.rootConnectionName ?? route.connectionName,
+        }
+      }
+
       return route
     })
   }

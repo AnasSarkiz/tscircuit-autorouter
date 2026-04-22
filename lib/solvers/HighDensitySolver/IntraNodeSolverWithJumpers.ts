@@ -50,6 +50,7 @@ export class IntraNodeSolverWithJumpers extends BaseSolver {
   hyperParameters: Partial<HighDensityHyperParameters>
   minDistBetweenEnteringPoints: number
   traceWidth: number
+  connectionRootByName: Map<string, string>
 
   activeSubSolver: SingleHighDensityRouteWithJumpersSolver | null = null
   lastActiveSubSolver: SingleHighDensityRouteWithJumpersSolver | null = null
@@ -81,6 +82,13 @@ export class IntraNodeSolverWithJumpers extends BaseSolver {
     this.failedSubSolvers = []
     this.connMap = params.connMap
     this.traceWidth = params.traceWidth ?? 0.15
+    this.connectionRootByName = new Map()
+    for (const { connectionName, rootConnectionName } of nodeWithPortPoints.portPoints) {
+      this.connectionRootByName.set(
+        connectionName,
+        rootConnectionName ?? connectionName,
+      )
+    }
 
     const unsolvedConnectionsMap: Map<
       string,
@@ -207,24 +215,29 @@ export class IntraNodeSolverWithJumpers extends BaseSolver {
         z: 0,
       },
       obstacleRoutes: this.solvedRoutes.filter((sr) => {
-        // Skip routes with same root connection
-        if (
-          rootConnectionName &&
-          sr.rootConnectionName === rootConnectionName
-        ) {
-          return false
-        }
-        // Skip routes that are connected via connMap
-        if (this.connMap?.areIdsConnected(sr.connectionName, connectionName)) {
-          return false
-        }
-        return true
+        return !this.areConnectionsEquivalent(sr.connectionName, connectionName)
       }),
-      futureConnections: this.unsolvedConnections,
+      futureConnections: this.unsolvedConnections.filter(
+        (futureConnection) =>
+          !this.areConnectionsEquivalent(
+            futureConnection.connectionName,
+            connectionName,
+          ),
+      ),
       hyperParameters: this.hyperParameters,
       connMap: this.connMap,
       traceThickness: this.traceWidth,
     })
+  }
+
+  private areConnectionsEquivalent(connectionA: string, connectionB: string) {
+    if (connectionA === connectionB) return true
+
+    const rootA = this.connectionRootByName.get(connectionA) ?? connectionA
+    const rootB = this.connectionRootByName.get(connectionB) ?? connectionB
+    if (rootA === rootB) return true
+
+    return this.connMap?.areIdsConnected(connectionA, connectionB) ?? false
   }
 
   /**

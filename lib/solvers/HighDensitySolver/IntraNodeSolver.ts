@@ -45,6 +45,7 @@ export class IntraNodeRouteSolver extends BaseSolver {
     points: { x: number; y: number; z: number }[]
   }[]
   originalConnectionPointsByName: Map<string, ConnectionPoint[]>
+  connectionRootByName: Map<string, string>
 
   totalConnections: number
   solvedRoutes: HighDensityIntraNodeRoute[]
@@ -92,6 +93,13 @@ export class IntraNodeRouteSolver extends BaseSolver {
     this.viaDiameter = params.viaDiameter ?? 0.3
     this.traceWidth = params.traceWidth ?? 0.15
     this.obstacleMargin = params.obstacleMargin ?? 0.15
+    this.connectionRootByName = new Map()
+    for (const { connectionName, rootConnectionName } of nodeWithPortPoints.portPoints) {
+      this.connectionRootByName.set(
+        connectionName,
+        rootConnectionName ?? connectionName,
+      )
+    }
     const unsolvedConnectionsMap: Map<string, ConnectionPoint[]> = new Map()
     for (const { connectionName, x, y, z } of nodeWithPortPoints.portPoints) {
       unsolvedConnectionsMap.set(connectionName, [
@@ -188,6 +196,13 @@ export class IntraNodeRouteSolver extends BaseSolver {
     points: { x: number; y: number; z: number }[]
   }) {
     const { connectionName, points } = unsolvedConnection
+    const futureConnections = this.unsolvedConnections.filter(
+      (futureConnection) =>
+        !this.areConnectionsEquivalent(
+          futureConnection.connectionName,
+          connectionName,
+        ),
+    )
     return {
       connectionName,
       minDistBetweenEnteringPoints: this.minDistBetweenEnteringPoints,
@@ -201,10 +216,10 @@ export class IntraNodeRouteSolver extends BaseSolver {
       obstacleRoutes: this.connMap
         ? this.solvedRoutes.filter(
             (sr) =>
-              !this.connMap!.areIdsConnected(sr.connectionName, connectionName),
+              !this.areConnectionsEquivalent(sr.connectionName, connectionName),
           )
         : this.solvedRoutes,
-      futureConnections: this.unsolvedConnections,
+      futureConnections,
       layerCount: this.nodeWithPortPoints.portPoints.reduce(
         (max, p) => Math.max(max, (p.z ?? 0) + 1),
         2,
@@ -300,6 +315,16 @@ export class IntraNodeRouteSolver extends BaseSolver {
     ].sort((a, b) => a - b)
   }
 
+  private areConnectionsEquivalent(connectionA: string, connectionB: string) {
+    if (connectionA === connectionB) return true
+
+    const rootA = this.connectionRootByName.get(connectionA) ?? connectionA
+    const rootB = this.connectionRootByName.get(connectionB) ?? connectionB
+    if (rootA === rootB) return true
+
+    return this.connMap?.areIdsConnected(connectionA, connectionB) ?? false
+  }
+
   private getFirstSolvedViaTraceConflict() {
     if (this.solvedRoutes.length < 2) return null
 
@@ -314,16 +339,15 @@ export class IntraNodeRouteSolver extends BaseSolver {
           const conflicts = spatialIndex
             .getConflictingRoutesNearPoint({ x: via.x, y: via.y, z }, margin)
             .filter(({ conflictingRoute }) => {
-              if (conflictingRoute.connectionName === route.connectionName) {
+              if (
+                this.areConnectionsEquivalent(
+                  conflictingRoute.connectionName,
+                  route.connectionName,
+                )
+              ) {
                 return false
               }
-
-              return !(
-                this.connMap?.areIdsConnected(
-                  route.connectionName,
-                  conflictingRoute.connectionName,
-                ) ?? false
-              )
+              return true
             })
 
           if (conflicts.length > 0) {
