@@ -412,7 +412,7 @@ export class SingleLayerNoDifferentRootIntersectionsIntraNodeSolver extends Base
     if (availableZ.length !== 1) return false
     // Keep this solver focused on compact single-layer nodes while allowing
     // slightly larger reduced nodes produced by pipeline subdivision.
-    if (node.portPoints.length > 10) return false
+    if (node.portPoints.length > 12) return false
 
     const bounds = getBounds(node)
     if (node.portPoints.some((point) => getEdge(point, bounds) === null)) {
