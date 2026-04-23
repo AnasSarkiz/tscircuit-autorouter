@@ -64,13 +64,13 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
       ["majorCombinations", "orderings6", "cellSizeFactor"],
       ["noVias"],
       ["orderings50"],
+      ["fixedTopologyHighDensityIntraNodeSolver"],
       ["flipTraceAlignmentDirection", "orderings6"],
       ["closedFormSingleTrace"],
       // ["closedFormTwoTrace"],
-      ["highDensityA01"],
-      ["highDensityA03"],
+      // ["highDensityA01"],
+      // ["highDensityA03"],
       ["highDensityA09"],
-      ["fixedTopologyHighDensityIntraNodeSolver"],
     ]
   }
 
@@ -248,7 +248,7 @@ export class HyperSingleIntraNodeSolver extends HyperParameterSupervisorSolver<
       return (
         1000 +
         ((solver.hyperParameters?.ITERATION_PENALTY ?? 0) + solver.iterations) /
-          10_000 +
+        10_000 +
         10_000 * (solver.hyperParameters.SEGMENTS_PER_POLYLINE! - 3)
       )
     }
