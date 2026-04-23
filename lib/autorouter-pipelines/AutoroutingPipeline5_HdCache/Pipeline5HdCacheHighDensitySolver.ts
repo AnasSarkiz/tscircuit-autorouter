@@ -210,6 +210,9 @@ const getIntraNodeStrategyName = (
   if (hyperParameters?.HIGH_DENSITY_A03) {
     return "HighDensitySolverA03"
   }
+  if (hyperParameters?.HIGH_DENSITY_A09) {
+    return "HighDensitySolverA09"
+  }
   return "SingleHighDensityRouteSolver6_VertHorzLayer_FutureCost"
 }
 
