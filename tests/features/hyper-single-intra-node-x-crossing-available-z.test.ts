@@ -184,6 +184,12 @@ const solvingCases = [
       HIGH_DENSITY_A03: true,
     },
   },
+  {
+    name: "HighDensitySolverA09",
+    hyperParameters: {
+      HIGH_DENSITY_A09: true,
+    },
+  },
 ] as const
 
 for (const { name, hyperParameters } of solvingCases) {
